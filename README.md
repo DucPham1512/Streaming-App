@@ -100,3 +100,171 @@ To initialize this environment, you will need a combination of web and ML-orient
 ---
 
 > **Open Question:** For the Speech-to-Text component, processing audio chunks continuously can block your Flask server. Are you planning to run the STT model synchronously on the main server thread, or were you considering a task queue (like Celery or Redis) to handle the audio processing asynchronously?
+
+---
+
+## 5. Developer Code Guide
+
+### A. Running the App
+
+```bash
+# First time setup
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Apply database migrations (creates the DB file on first run)
+.venv/bin/alembic upgrade head
+
+# Optionally populate mock data
+.venv/bin/python seed.py
+
+# Start the dev server
+.venv/bin/python run.py
+```
+
+The server starts on `http://localhost:5000`. The health check at `/` confirms it is alive.
+
+### B. Running Tests
+
+```bash
+.venv/bin/pytest
+```
+
+Tests use an in-memory SQLite database (`sqlite:///:memory:`) that is created fresh and dropped for every test function, so they are fully isolated from the development database.
+
+---
+
+### C. Directory Reference
+
+```text
+Streaming_app/
+│
+├── run.py                      # Entry point — starts the Flask-SocketIO server
+├── seed.py                     # Populates the dev DB with mock data (safe to re-run)
+├── alembic.ini                 # Alembic configuration (points at migrations/)
+├── requirements.txt
+│
+├── app/
+│   ├── __init__.py             # Application factory (create_app)
+│   │                           # Wires together config, extensions, blueprints, sockets
+│   │
+│   ├── config.py               # DevelopmentConfig / TestingConfig / ProductionConfig
+│   │                           # DB path, SECRET_KEY, CORS origins live here
+│   │
+│   ├── extensions.py           # Shared singletons: db, socketio, cors
+│   │                           # Instantiated here, bound to the app in create_app()
+│   │
+│   ├── models/
+│   │   ├── __init__.py         # Re-exports all models — import from here, not submodules
+│   │   ├── stream.py           # Stream — represents a live session
+│   │   └── gesture.py          # GestureMapping — maps a gesture to an action per user
+│   │
+│   ├── api/                    # REST blueprints (HTTP only)
+│   │   ├── stream_routes.py    # /api/v1/streams  — CRUD for stream sessions
+│   │   └── config_routes.py    # /api/v1/settings — gesture configuration
+│   │
+│   ├── sockets/                # WebSocket event handlers (SocketIO only)
+│   │   ├── connection_events.py  # connect, disconnect, join_room, leave_room
+│   │   └── media_events.py       # stream_audio_chunk, gesture_command_received
+│   │
+│   └── services/               # Business logic decoupled from routing
+│       ├── stream_manager.py   # Singleton that owns stream lifecycle + in-memory registry
+│       └── stt_engine.py       # Speech-to-text wrapper (faster-whisper / stub fallback)
+│
+├── migrations/                 # Alembic migration scripts — commit these to git
+│   ├── env.py                  # Flask-aware Alembic env (reads DB URL from app config)
+│   ├── script.py.mako          # Template used when generating new migration files
+│   └── versions/               # Auto-generated migration files, one per schema change
+│
+└── tests/
+    ├── conftest.py             # Pytest fixtures: app, db, client, socketio_test_client
+    ├── test_api.py             # REST endpoint tests
+    └── test_sockets.py         # WebSocket event tests
+```
+
+---
+
+### D. Key Patterns to Know
+
+**Application Factory (`app/__init__.py`)**
+`create_app(config_name)` is the single function that builds the Flask app. Nothing is
+global — extensions start unbound in `extensions.py` and are wired up inside `create_app`
+via `init_app()`. This is what allows tests to spin up a fresh app with a different config.
+
+**Extension Singletons (`app/extensions.py`)**
+`db`, `socketio`, and `cors` are created once at import time with no app attached.
+Always import them from `app.extensions`, never from a model or route file, to avoid
+circular imports.
+
+**Blueprints (`app/api/`)**
+Each file registers a `Blueprint` with a `url_prefix`. To add a new group of REST
+routes, create a new blueprint file and register it in `create_app`.
+
+**Service Layer (`app/services/`)**
+Route handlers and socket handlers should not contain business logic. They delegate to a
+service instead. `StreamManager` is a singleton (module-level instance) that is safe to
+import directly anywhere.
+
+---
+
+### E. Adding a New Feature — Step by Step
+
+#### 1. Add a model
+
+Create `app/models/your_model.py` inheriting from `db.Model`, then re-export it in
+`app/models/__init__.py`:
+
+```python
+# app/models/__init__.py
+from app.models.your_model import YourModel  # noqa: F401
+```
+
+#### 2. Generate and apply the migration
+
+```bash
+.venv/bin/alembic revision --autogenerate -m "add_your_model_table"
+.venv/bin/alembic upgrade head
+```
+
+Review the generated file in `migrations/versions/` before applying — autogenerate is
+accurate for simple cases but occasionally needs manual adjustment.
+
+#### 3. Add a service (if needed)
+
+Put business logic in `app/services/your_service.py`. Keep it framework-agnostic: no
+`flask.request`, no `emit()`. This makes it trivially testable.
+
+#### 4. Add REST routes or socket handlers
+
+- REST: create `app/api/your_routes.py`, define a `Blueprint`, register it in `create_app`.
+- WebSocket: add handlers to an existing file in `app/sockets/` or create a new one and
+  import it (side-effect import) in `create_app`.
+
+#### 5. Write tests
+
+Add test functions to `tests/test_api.py` or `tests/test_sockets.py`. Use the fixtures
+from `conftest.py` — `client` for REST, `socketio_test_client` for WebSocket events.
+
+---
+
+### F. Database Workflow (Alembic Cheatsheet)
+
+| Task | Command |
+|---|---|
+| Apply all pending migrations | `.venv/bin/alembic upgrade head` |
+| Roll back one migration | `.venv/bin/alembic downgrade -1` |
+| Generate migration from model changes | `.venv/bin/alembic revision --autogenerate -m "description"` |
+| Show current revision | `.venv/bin/alembic current` |
+| Show migration history | `.venv/bin/alembic history` |
+| Re-populate mock data | `.venv/bin/python seed.py` |
+
+The development database lives at the platform-appropriate user data directory:
+
+| OS | Path |
+|---|---|
+| Linux | `~/.local/share/streaming_app/streaming_app.db` |
+| macOS | `~/Library/Application Support/streaming_app/streaming_app.db` |
+| Windows | `%APPDATA%\streaming_app\streaming_app.db` |
+
+Set `DATABASE_URL` in your environment to override this for any config (e.g. pointing at
+a PostgreSQL instance in production).

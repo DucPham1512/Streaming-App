@@ -50,11 +50,6 @@ def create_app(config_name=None):
     import app.sockets.connection_events  # noqa: F401
     import app.sockets.media_events  # noqa: F401
 
-    # Create database tables
-    with application.app_context():
-        from app.models import Stream, GestureMapping  # noqa: F401
-        db.create_all()
-
     # Health check route
     @application.route("/")
     def health():
