@@ -1,52 +1,42 @@
-"""Stream lifecycle and state management service.
-
-Keeps an in-memory registry of active streams alongside the persistent
-database records.  This lets WebSocket handlers check stream liveness
-without hitting the DB on every frame.
-"""
+"""Stream lifecycle and state management service."""
 
 import threading
 from datetime import datetime, timezone
 
 from app.extensions import db
 from app.models.stream import Stream
+from app.services import mux_service
 
 
 class StreamManager:
-    """Manages the lifecycle of livestream sessions."""
-
     def __init__(self):
-        # thread-safe set of currently active stream IDs
         self._active_streams: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def create_stream(self, title="Untitled Stream", description="", privacy="public"):
-        """Create a new stream and persist it to the database.
+        """Create a Mux live stream + persist a local record.
 
-        Returns the created Stream model instance.
+        Raises mux_service.MuxServiceError if the Mux API call fails.
         """
-        stream = Stream(title=title, description=description, privacy=privacy)
+        # Call Mux first — if it fails, we don't want a half-created DB record
+        mux_stream = mux_service.create_live_stream()
+
+        stream = Stream(
+            title=title,
+            description=description,
+            privacy=privacy,
+            status="idle",
+            mux_stream_id=mux_stream.mux_stream_id,
+            mux_playback_id=mux_stream.playback_id,
+            mux_stream_key=mux_stream.stream_key,
+        )
         db.session.add(stream)
         db.session.commit()
 
-        with self._lock:
-            self._active_streams[stream.id] = {
-                "connected_clients": set(),
-                "created_at": stream.created_at,
-            }
-
+        # Note: don't add to active_streams yet — wait for Mux 'active' webhook
         return stream
 
     def update_stream(self, stream_id, **kwargs):
-        """Update mutable metadata on a stream.
-
-        Allowed fields: title, description, privacy.
-        Returns the updated Stream or None if not found.
-        """
         stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
@@ -60,14 +50,18 @@ class StreamManager:
         return stream
 
     def end_stream(self, stream_id):
-        """Terminate a stream — marks it as ended in the DB and removes
-        it from the in-memory active registry.
-
-        Returns the ended Stream or None if not found / already ended.
-        """
+        """Terminate a stream — signals Mux + marks DB record ended."""
         stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
+
+        # Tell Mux to disconnect the broadcaster (idempotent)
+        if stream.mux_stream_id:
+            try:
+                mux_service.end_live_stream(stream.mux_stream_id)
+            except mux_service.MuxServiceError:
+                # Log but don't block the local end — Mux state will reconcile via webhook
+                pass
 
         stream.status = "ended"
         stream.ended_at = datetime.now(timezone.utc)
@@ -78,17 +72,58 @@ class StreamManager:
 
         return stream
 
+    # ---- Webhook-driven state transitions ----
+
+    def mark_active(self, mux_stream_id: str):
+        """Called by webhook handler on 'video.live_stream.active'."""
+        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+        if stream is None or stream.status == "ended":
+            return None
+
+        stream.status = "active"
+        if stream.started_at is None:
+            stream.started_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        with self._lock:
+            self._active_streams.setdefault(stream.id, {
+                "connected_clients": set(),
+                "created_at": stream.created_at,
+            })
+        return stream
+
+    def mark_disconnected(self, mux_stream_id: str):
+        """Called on 'video.live_stream.disconnected' — temporary state, do NOT end."""
+        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+        if stream is None or stream.status == "ended":
+            return None
+        stream.status = "disconnected"
+        db.session.commit()
+        return stream
+
+    def mark_idle(self, mux_stream_id: str):
+        """Called on 'video.live_stream.idle' — Mux's reconnect window expired."""
+        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+        if stream is None or stream.status == "ended":
+            return None
+        stream.status = "ended"
+        stream.ended_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        with self._lock:
+            self._active_streams.pop(stream.id, None)
+        return stream
+
+    # ---- Existing in-memory registry methods (unchanged) ----
+
     def get_stream(self, stream_id):
-        """Retrieve a stream by ID."""
         return db.session.get(Stream, stream_id)
 
     def is_active(self, stream_id):
-        """Check whether a stream is currently active (in-memory)."""
         with self._lock:
             return stream_id in self._active_streams
 
     def add_client(self, stream_id, sid):
-        """Register a WebSocket client in a stream room."""
         with self._lock:
             if stream_id in self._active_streams:
                 self._active_streams[stream_id]["connected_clients"].add(sid)
@@ -96,16 +131,23 @@ class StreamManager:
         return False
 
     def remove_client(self, stream_id, sid):
-        """Unregister a WebSocket client from a stream room."""
         with self._lock:
             if stream_id in self._active_streams:
                 self._active_streams[stream_id]["connected_clients"].discard(sid)
 
     def get_active_stream_ids(self):
-        """Return a list of currently active stream IDs."""
         with self._lock:
             return list(self._active_streams.keys())
+        
+    def mark_connected(self, mux_stream_id: str):
+        """Called on 'video.live_stream.connected' — broadcaster connected but not yet active."""
+        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+        if stream is None or stream.status == "ended":
+            return None
+        # Only transition idle → connected; don't downgrade from active
+        if stream.status == "idle":
+            stream.status = "connected"
+            db.session.commit()
+        return stream
 
-
-# Module-level singleton — imported by route / socket handlers
 stream_manager = StreamManager()
