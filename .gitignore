@@ -1,3 +1,5 @@
 plan.md
 .venv
 __pycache__/
+.claude/
+*.pdf

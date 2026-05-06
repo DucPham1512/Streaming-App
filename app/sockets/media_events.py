@@ -1,13 +1,17 @@
 """WebSocket media event handlers.
 
-Events: stream_audio_chunk, gesture_command_received
+Events: stream_audio_chunk, gesture_frame
 """
 
 import logging
+from datetime import datetime, timezone
+
 from flask import request as flask_request
 from flask_socketio import emit
 
-from app.extensions import socketio
+from app.extensions import db, socketio
+from app.models.gesture_log import GestureLog
+from app.services.gesture_service import get_effect_name, is_effect, resolve_gesture
 from app.services.stt_engine import stt_engine
 from app.services.stream_manager import stream_manager
 
@@ -63,51 +67,90 @@ def handle_audio_chunk(data):
         logger.info("Subtitle broadcast to room %s: %s", stream_id, text[:80])
 
 
-@socketio.on("gesture_command_received")
-def handle_gesture_command(data):
-    """Frontend detected a hand gesture and sends the command.
+@socketio.on("gesture_frame")
+def handle_gesture_frame(data):
+    """Receive a recognized gesture from the broadcaster, resolve it to an action, and broadcast.
 
     Expected payload:
-        {"command": "switch_camera", "confidence": 0.95, "stream_id": "<uuid>"}
+        {
+            "gesture": "heart_gesture",
+            "confidence": 0.95,
+            "stream_id": "<uuid>",
+            "user_id": "default",           // optional
+            "hand_position": {"x": 0.42, "y": 0.61}  // optional, for effect rendering
+        }
+
+    Emits to sender:
+        gesture_ack: {"gesture", "action", "status": "mapped"|"unmapped"}
+
+    Emits to room (mapped control gesture):
+        stream_action: {"action", "gesture", "stream_id", "triggered_by"}
+
+    Emits to room (mapped effect gesture):
+        stream_effect: {"effect", "hand_position", "stream_id", "triggered_by"}
     """
     sid = flask_request.sid
 
     if not isinstance(data, dict):
-        emit("error", {"message": "Gesture command must be a JSON object"})
+        emit("error", {"message": "Gesture payload must be a JSON object"})
         return
 
-    command = data.get("command")
-    confidence = data.get("confidence", 0.0)
+    gesture = data.get("gesture")
+    confidence = data.get("confidence")
     stream_id = data.get("stream_id")
+    user_id = data.get("user_id", "default")
+    hand_position = data.get("hand_position")
 
-    if not command:
-        emit("error", {"message": "'command' field is required"})
+    if not gesture:
+        emit("error", {"message": "'gesture' field is required"})
         return
 
     if not stream_id or not stream_manager.is_active(stream_id):
-        emit("error", {"message": "No active stream for gesture command"})
+        emit("error", {"message": "No active stream for gesture"})
         return
 
-    # Acknowledge to sender
-    emit("gesture_ack", {
-        "command": command,
-        "confidence": confidence,
-        "status": "received",
-    })
+    action = resolve_gesture(gesture, user_id)
 
-    # Broadcast the state change to all viewers in the room
-    emit(
-        "stream_state_update",
-        {
-            "command": command,
-            "confidence": confidence,
-            "stream_id": stream_id,
-            "triggered_by": sid,
-        },
-        to=stream_id,
-    )
+    db.session.add(GestureLog(
+        stream_id=stream_id,
+        user_id=user_id,
+        gesture=gesture,
+        action=action,
+        confidence=confidence,
+        timestamp=datetime.now(timezone.utc),
+    ))
+    db.session.commit()
 
-    logger.info(
-        "Gesture command '%s' (confidence=%.2f) from %s in stream %s",
-        command, confidence, sid, stream_id,
-    )
+    status = "mapped" if action else "unmapped"
+    emit("gesture_ack", {"gesture": gesture, "action": action, "status": status})
+
+    if not action:
+        logger.info("Unmapped gesture '%s' from %s in stream %s", gesture, sid, stream_id)
+        return
+
+    if is_effect(action):
+        emit(
+            "stream_effect",
+            {
+                "effect": get_effect_name(action),
+                "hand_position": hand_position,
+                "stream_id": stream_id,
+                "triggered_by": sid,
+            },
+            to=stream_id,
+        )
+        logger.info("Effect '%s' triggered by gesture '%s' from %s in stream %s",
+                    get_effect_name(action), gesture, sid, stream_id)
+    else:
+        emit(
+            "stream_action",
+            {
+                "action": action,
+                "gesture": gesture,
+                "stream_id": stream_id,
+                "triggered_by": sid,
+            },
+            to=stream_id,
+        )
+        logger.info("Action '%s' triggered by gesture '%s' from %s in stream %s",
+                    action, gesture, sid, stream_id)

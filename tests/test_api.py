@@ -155,8 +155,32 @@ class TestGestureConfigRoutes:
         )
         assert resp.status_code == 400
 
+    def test_update_gestures_includes_effect_seeds(self, client):
+        """Default seed includes entertainment effect mappings."""
+        resp = client.get("/api/v1/settings/gestures")
+        gestures = resp.get_json()["gestures"]
+        assert gestures["heart_gesture"] == "effect:heart"
+        assert gestures["victory_sign"] == "effect:confetti"
+
     def test_health_check(self, client):
         """GET / returns health status."""
         resp = client.get("/")
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ok"
+
+
+class TestGestureLogRoutes:
+    """Tests for /api/v1/settings/gesture-logs endpoint."""
+
+    def test_gesture_logs_requires_stream_id(self, client):
+        """GET /api/v1/settings/gesture-logs without stream_id returns 400."""
+        resp = client.get("/api/v1/settings/gesture-logs")
+        assert resp.status_code == 400
+
+    def test_gesture_logs_empty(self, client):
+        """GET /api/v1/settings/gesture-logs for a stream with no events returns empty list."""
+        resp = client.get("/api/v1/settings/gesture-logs?stream_id=nonexistent")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["logs"] == []
+        assert data["stream_id"] == "nonexistent"

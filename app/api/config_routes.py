@@ -2,24 +2,29 @@
 
 Endpoints
 ---------
-GET  /api/v1/settings/gestures  — Fetch gesture → action mappings
-PUT  /api/v1/settings/gestures  — Replace / update gesture mappings
+GET  /api/v1/settings/gestures       — Fetch gesture → action mappings
+PUT  /api/v1/settings/gestures       — Replace / update gesture mappings
+GET  /api/v1/settings/gesture-logs   — Query gesture event log for a stream
 """
 
 from flask import Blueprint, request, jsonify
 
 from app.extensions import db
 from app.models.gesture import GestureMapping
+from app.models.gesture_log import GestureLog
 
 config_bp = Blueprint("config", __name__, url_prefix="/api/v1/settings")
 
-# Default gesture mappings seeded on first GET if table is empty
+# Default gesture mappings seeded on first GET if table is empty.
+# Actions prefixed with "effect:" are entertainment effects rendered client-side.
 DEFAULT_GESTURES = {
     "open_palm": "start_stream",
     "closed_fist": "stop_stream",
     "peace_sign": "mute_mic",
     "thumbs_up": "switch_camera",
     "thumbs_down": "end_stream",
+    "heart_gesture": "effect:heart",
+    "victory_sign": "effect:confetti",
 }
 
 
@@ -118,3 +123,31 @@ def update_gestures():
         ),
         200,
     )
+
+
+@config_bp.route("/gesture-logs", methods=["GET"])
+def get_gesture_logs():
+    """Fetch recent gesture event logs for a stream.
+
+    Query params:
+        - stream_id (str, required)
+        - limit (int, default 50, max 200)
+
+    Returns:
+        200 with list of gesture log entries, newest first.
+        400 if stream_id is missing.
+    """
+    stream_id = request.args.get("stream_id")
+    if not stream_id:
+        return jsonify({"error": "'stream_id' query parameter is required"}), 400
+
+    limit = min(int(request.args.get("limit", 50)), 200)
+
+    logs = (
+        GestureLog.query
+        .filter_by(stream_id=stream_id)
+        .order_by(GestureLog.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+    return jsonify({"stream_id": stream_id, "logs": [log.to_dict() for log in logs]}), 200
