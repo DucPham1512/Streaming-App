@@ -1,6 +1,11 @@
 """Application configuration classes."""
-
 import os
+from dotenv import load_dotenv
+
+# Load .env into os.environ — must run before any os.environ reads below.
+# In production, env vars are typically set by the deployment platform,
+# and load_dotenv() is a no-op if no .env file exists.
+load_dotenv()
 
 from platformdirs import user_data_dir
 
@@ -12,7 +17,6 @@ def _default_db_uri() -> str:
 
 class Config:
     """Base configuration."""
-
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
@@ -21,6 +25,10 @@ class Config:
     RATELIMIT_DEFAULT = os.environ.get("RATELIMIT_DEFAULT", "1000 per hour")
     RATELIMIT_STRATEGY = "fixed-window"
     RATELIMIT_HEADERS_ENABLED = True
+    # Mux credentials
+    MUX_TOKEN_ID = os.environ.get("MUX_TOKEN_ID")
+    MUX_TOKEN_SECRET = os.environ.get("MUX_TOKEN_SECRET")
+    MUX_WEBHOOK_SECRET = os.environ.get("MUX_WEBHOOK_SECRET")  # optional in dev
 
     # --- MinIO / S3-compatible object storage ---
     MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
@@ -57,14 +65,12 @@ class Config:
 
 class DevelopmentConfig(Config):
     """Development configuration."""
-
     DEBUG = True
     SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", _default_db_uri())
 
 
 class TestingConfig(Config):
     """Testing configuration."""
-
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     RATELIMIT_ENABLED = False

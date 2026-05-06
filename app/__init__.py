@@ -4,6 +4,7 @@ Creates and configures the Flask application with all extensions,
 blueprints, and WebSocket event handlers registered.
 """
 
+from email.mime import application
 import os
 import logging
 
@@ -53,6 +54,10 @@ def create_app(config_name=None):
     application.register_blueprint(config_bp)
     application.register_blueprint(media_bp)
 
+    from app.api.webhook_routes import webhook_bp
+    application.register_blueprint(webhook_bp)
+
+    # Import socket event handlers so they are registered with socketio
     import app.sockets.connection_events  # noqa: F401
     import app.sockets.media_events  # noqa: F401
 
