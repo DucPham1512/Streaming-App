@@ -151,8 +151,14 @@ def seed() -> None:
             f"{gesture_count} gesture mappings."
         )
         logger.info("Dev API keys (use as 'Authorization: Bearer <key>'):")
+        logger.info(
+            "  %-8s  %-36s  %s",
+            "username",
+            "owner_id (UUID)",
+            "api_key",
+        )
         for u in User.query.order_by(User.username).all():
-            logger.info("  %s  %s", f"{u.username:<8}", u.api_key)
+            logger.info("  %-8s  %-36s  %s", u.username, str(u.id), u.api_key)
 
 
 if __name__ == "__main__":
