@@ -268,3 +268,78 @@ The development database lives at the platform-appropriate user data directory:
 
 Set `DATABASE_URL` in your environment to override this for any config (e.g. pointing at
 a PostgreSQL instance in production).
+
+---
+
+## 6. Full Dev Setup (feat/media and beyond)
+
+This section covers the additional steps required once MinIO-backed media storage is part of the stack.
+
+### Prerequisites
+
+- Docker (for MinIO)
+- The `.env` file must not contain inline comments — they are not supported and will be parsed as part of the value. Put comments on their own line:
+
+```bash
+# OK
+# DATABASE_URL=
+
+# Breaks — the comment becomes the value
+DATABASE_URL=  # leave empty for SQLite
+```
+
+### First-time setup
+
+```bash
+# 1. Install dependencies
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# 2. Copy env file and remove any inline comments
+cp .env.example .env
+
+# 3. Start MinIO
+docker compose up -d
+
+# 4. Apply all database migrations
+.venv/bin/alembic upgrade head
+
+# 5. Create MinIO buckets (run once)
+.venv/bin/flask init-buckets
+
+# 6. Seed mock data (optional)
+.venv/bin/python seed.py
+
+# 7. Start the server
+.venv/bin/python run.py
+```
+
+The server starts on `http://0.0.0.0:5001`.
+
+### Subsequent runs
+
+```bash
+docker compose up -d     # make sure MinIO is running
+.venv/bin/python run.py
+```
+
+### Switching branches with different migrations
+
+If you switch to a branch with a different migration history and see:
+```
+FAILED: Can't locate revision identified by '...'
+```
+
+Clear the version record and re-apply:
+
+```bash
+sqlite3 ~/.local/share/streaming_app/streaming_app.db "DELETE FROM alembic_version;"
+.venv/bin/alembic upgrade head
+```
+
+If tables already exist from another branch, delete the DB and start fresh:
+
+```bash
+rm ~/.local/share/streaming_app/streaming_app.db
+.venv/bin/alembic upgrade head
+```
