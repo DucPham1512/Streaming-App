@@ -7,7 +7,7 @@ from app.extensions import db
 
 
 class Stream(db.Model):
-    """Represents a livestream session."""
+    """Represents a livestream session backed by Mux."""
 
     __tablename__ = "streams"
 
@@ -17,22 +17,54 @@ class Stream(db.Model):
     privacy = db.Column(
         db.String(20), nullable=False, default="public"
     )  # public / private / unlisted
-    status = db.Column(
-        db.String(20), nullable=False, default="active"
-    )  # active / ended
+
+    # Status now mirrors Mux lifecycle states:
+    #   idle         — created, never broadcast
+    #   active       — currently broadcasting
+    #   disconnected — temporarily lost (don't end yet, may reconnect)
+    #   ended        — terminated, will not resume
+    status = db.Column(db.String(20), nullable=False, default="idle")
+
+    # ---- Mux integration fields ----
+    mux_stream_id = db.Column(db.String(64), unique=True, nullable=True, index=True)
+    mux_playback_id = db.Column(db.String(64), nullable=True)
+    # SECRET — never expose in list endpoints. Only return to owner on creation.
+    # For an assignment we store as plaintext; in production you'd encrypt at rest.
+    mux_stream_key = db.Column(db.String(128), nullable=True)
+    like_count = db.Column(db.Integer, nullable=False, default=0)
+
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+    started_at = db.Column(db.DateTime, nullable=True)  # set when Mux fires 'active'
     ended_at = db.Column(db.DateTime, nullable=True)
 
-    def to_dict(self):
-        """Serialize the stream to a dictionary."""
-        return {
+    def to_dict(self, include_secrets: bool = False):
+        """Serialize the stream.
+
+        :param include_secrets: If True, includes mux_stream_key and RTMP URL.
+                                ONLY pass True when returning to the stream's owner
+                                immediately after creation. NEVER in list endpoints.
+        """
+        data = {
             "id": self.id,
             "title": self.title,
             "description": self.description,
             "privacy": self.privacy,
             "status": self.status,
+            "playback_url": (
+                f"https://stream.mux.com/{self.mux_playback_id}.m3u8"
+                if self.mux_playback_id
+                else None
+            ),
+            "like_count": self.like_count,  # NEW
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
         }
+        if include_secrets:
+            data["broadcast"] = {
+                "rtmp_url": "rtmp://global-live.mux.com:5222/app",
+                "stream_key": self.mux_stream_key,
+            }
+        return data

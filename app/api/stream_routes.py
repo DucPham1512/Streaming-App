@@ -10,7 +10,8 @@ GET    /api/v1/streams              — List active streams (convenience)
 """
 
 from flask import Blueprint, request, jsonify
-
+from app.services import mux_service
+from app.models.stream import Stream
 from app.services.stream_manager import stream_manager
 
 stream_bp = Blueprint("streams", __name__, url_prefix="/api/v1/streams")
@@ -18,16 +19,7 @@ stream_bp = Blueprint("streams", __name__, url_prefix="/api/v1/streams")
 
 @stream_bp.route("", methods=["POST"])
 def create_stream():
-    """Initialize a new livestream session.
-
-    Request JSON (all optional):
-        - title (str)
-        - description (str)
-        - privacy (str): "public" | "private" | "unlisted"
-
-    Returns:
-        201 with stream data + a ws_token placeholder.
-    """
+    """Initialize a new livestream session."""
     data = request.get_json(silent=True) or {}
 
     title = data.get("title", "Untitled Stream")
@@ -37,19 +29,16 @@ def create_stream():
     if privacy not in ("public", "private", "unlisted"):
         return jsonify({"error": "privacy must be public, private, or unlisted"}), 400
 
-    stream = stream_manager.create_stream(
-        title=title, description=description, privacy=privacy
-    )
+    try:
+        stream = stream_manager.create_stream(
+            title=title, description=description, privacy=privacy
+        )
+    except mux_service.MuxServiceError as e:
+        return jsonify({"error": "Failed to provision stream", "detail": str(e)}), 502
 
-    return (
-        jsonify(
-            {
-                "stream": stream.to_dict(),
-                "ws_token": f"ws-token-{stream.id[:8]}",  # placeholder token
-            }
-        ),
-        201,
-    )
+    # include_secrets=True is critical here: this is the ONLY place the
+    # stream key is returned. List/get endpoints must never expose it.
+    return jsonify({"stream": stream.to_dict(include_secrets=True)}), 201
 
 
 @stream_bp.route("/<stream_id>", methods=["PATCH"])
@@ -110,12 +99,25 @@ def get_stream(stream_id):
 
 @stream_bp.route("", methods=["GET"])
 def list_streams():
-    """List all active stream IDs with their metadata."""
-    active_ids = stream_manager.get_active_stream_ids()
-    streams = []
-    for sid in active_ids:
-        stream = stream_manager.get_stream(sid)
-        if stream:
-            streams.append(stream.to_dict())
+    """List currently broadcasting streams (status = active)."""
+    streams = Stream.query.filter_by(status="active").order_by(Stream.started_at.desc()).all()
+    return jsonify({
+        "streams": [s.to_dict() for s in streams],  # include_secrets defaults to False
+        "count": len(streams),
+    }), 200
 
-    return jsonify({"streams": streams, "count": len(streams)}), 200
+@stream_bp.route("/<stream_id>/like", methods=["POST"])
+def like_stream(stream_id):
+    """Increment a stream's like count.
+
+    No auth in v1: any client can like, no per-user dedup.
+    When User model lands, change to track who liked what.
+    """
+    from app.extensions import db
+    stream = stream_manager.get_stream(stream_id)
+    if stream is None:
+        return jsonify({"error": "Stream not found"}), 404
+
+    stream.like_count += 1
+    db.session.commit()
+    return jsonify({"like_count": stream.like_count}), 200
