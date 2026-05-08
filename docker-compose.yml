@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: streaming-app-minio
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Uncomment to mirror production storage in dev:
+  # postgres:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: streaming
+  #     POSTGRES_PASSWORD: streaming
+  #     POSTGRES_DB: streaming_app
+  #   ports: ["5432:5432"]
+  #   volumes: [postgres_data:/var/lib/postgresql/data]
+
+volumes:
+  minio_data:
+  # postgres_data:

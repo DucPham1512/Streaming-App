@@ -1,15 +1,62 @@
 """Pytest fixtures for the streaming app test suite."""
 
+import os
+
+import boto3
 import pytest
+from moto import mock_aws
 
 from app import create_app
 from app.extensions import db as _db
+from app.models.user import User
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _aws_credentials():
+    """Set fake AWS env vars so boto3 doesn't try to read ~/.aws/."""
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
+    os.environ.setdefault("AWS_SECURITY_TOKEN", "testing")
+    os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
+    os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 
 @pytest.fixture(scope="session")
-def app():
-    """Create the Flask application configured for testing."""
+def _moto():
+    """Session-wide moto mock so storage_service can be configured once.
+
+    moto patches boto3 at the network layer; the patch must be active
+    when storage_service.init_app builds its boto3 client.
+    """
+    with mock_aws():
+        yield
+
+
+@pytest.fixture(scope="session")
+def app(_moto):
+    """Create the Flask application configured for testing.
+
+    Registers the throwaway ``_authtest`` blueprint used by
+    test_auth_service.py before any request is served (Flask 3 forbids
+    late blueprint registration).
+    """
     app = create_app("testing")
+
+    from tests._authtest_blueprint import make_authtest_blueprint
+
+    app.register_blueprint(make_authtest_blueprint())
+
+    # Pre-create the test buckets so storage operations have somewhere to go.
+    from app.services.storage_service import storage_service
+
+    with app.app_context():
+        s3 = storage_service.client
+        for bucket in (app.config["MEDIA_PUBLIC_BUCKET"], app.config["MEDIA_PRIVATE_BUCKET"]):
+            try:
+                s3.create_bucket(Bucket=bucket)
+            except Exception:
+                pass
+
     yield app
 
 
@@ -35,3 +82,65 @@ def socketio_test_client(app, db):
     from app.extensions import socketio
 
     return socketio.test_client(app)
+
+
+# --- Auth fixtures (Story A) -----------------------------------------------
+
+
+@pytest.fixture(scope="function")
+def auth_user(db):
+    """A persisted User with a known api_key, ready to authenticate as."""
+    user = User(username="alice", display_name="Alice", email="alice@example.test")
+    _db.session.add(user)
+    _db.session.commit()
+    return user
+
+
+@pytest.fixture(scope="function")
+def other_user(db):
+    """A second persisted user for cross-ownership tests."""
+    user = User(username="bob", display_name="Bob", email="bob@example.test")
+    _db.session.add(user)
+    _db.session.commit()
+    return user
+
+
+@pytest.fixture(scope="function")
+def auth_headers(auth_user):
+    """Authorization headers for the primary auth_user."""
+    return {"Authorization": f"Bearer {auth_user.api_key}"}
+
+
+@pytest.fixture(scope="function")
+def other_headers(other_user):
+    """Authorization headers for the second user."""
+    return {"Authorization": f"Bearer {other_user.api_key}"}
+
+
+# --- Story B fixtures: storage + media -------------------------------------
+
+
+@pytest.fixture(scope="function")
+def s3_client(app):
+    """Direct boto3 S3 client backed by moto, for pre/post test inspection."""
+    from app.services.storage_service import storage_service
+
+    return storage_service.client
+
+
+@pytest.fixture(scope="function")
+def fresh_buckets(app, s3_client):
+    """Reset the test buckets to empty before each test that uses storage."""
+    pub = app.config["MEDIA_PUBLIC_BUCKET"]
+    priv = app.config["MEDIA_PRIVATE_BUCKET"]
+    for bucket in (pub, priv):
+        try:
+            objs = s3_client.list_objects_v2(Bucket=bucket).get("Contents", []) or []
+            for o in objs:
+                s3_client.delete_object(Bucket=bucket, Key=o["Key"])
+        except Exception:
+            try:
+                s3_client.create_bucket(Bucket=bucket)
+            except Exception:
+                pass
+    return pub, priv
