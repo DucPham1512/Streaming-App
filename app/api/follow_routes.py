@@ -86,6 +86,16 @@ def list_followers(user_id):
     }), 200
 
 
+@follow_bp.route("/api/v1/follows/<user_id>/status", methods=["GET"])
+@require_auth
+def follow_status(user_id):
+    """Check whether the current user is following the given user."""
+    is_following = Follow.query.filter_by(
+        follower_id=g.current_user.id, followed_id=user_id
+    ).first() is not None
+    return jsonify({"following": is_following}), 200
+
+
 @follow_bp.route("/api/v1/users/<user_id>/following", methods=["GET"])
 def list_following(user_id):
     """List all users that the given user follows."""
