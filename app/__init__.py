@@ -11,7 +11,7 @@ import logging
 from flask import Flask, jsonify
 
 from app.config import config_by_name
-from app.extensions import db, socketio, cors, limiter
+from app.extensions import db, socketio, cors, limiter, migrate
 from app.services.exceptions import ServiceError
 from app.services.storage_service import storage_service
 
@@ -38,6 +38,7 @@ def create_app(config_name=None):
     )
 
     db.init_app(application)
+    migrate.init_app(application, db)
     cors.init_app(application, origins=application.config.get("CORS_ORIGINS", "*"))
     # Use the threading async_mode in tests to keep the SocketIO event loop
     # synchronous; production keeps eventlet.
@@ -49,10 +50,14 @@ def create_app(config_name=None):
     from app.api.stream_routes import stream_bp
     from app.api.config_routes import config_bp
     from app.api.media_routes import media_bp
+    from app.api.comment_routes import comment_bp
+    from app.api.follow_routes import follow_bp
 
     application.register_blueprint(stream_bp)
     application.register_blueprint(config_bp)
     application.register_blueprint(media_bp)
+    application.register_blueprint(comment_bp)
+    application.register_blueprint(follow_bp)
 
     from app.api.webhook_routes import webhook_bp
     application.register_blueprint(webhook_bp)
@@ -60,6 +65,7 @@ def create_app(config_name=None):
     # Import socket event handlers so they are registered with socketio
     import app.sockets.connection_events  # noqa: F401
     import app.sockets.media_events  # noqa: F401
+    import app.sockets.social_events  # noqa: F401
 
     _register_error_handlers(application)
     _register_cli(application)

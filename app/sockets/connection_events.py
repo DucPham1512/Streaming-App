@@ -7,7 +7,7 @@ import logging
 from flask import request as flask_request
 from flask_socketio import emit, join_room, leave_room
 
-from app.extensions import socketio
+from app.extensions import socketio, db
 from app.services.stream_manager import stream_manager
 
 logger = logging.getLogger(__name__)
@@ -46,9 +46,13 @@ def handle_join_room(data):
         emit("error", {"message": "stream_id is required"})
         return
 
+    # Allow joining any stream that exists in the DB; active-only enforcement
+    # would block dev/demo streams that haven't received a Mux webhook yet.
     if not stream_manager.is_active(stream_id):
-        emit("error", {"message": f"Stream {stream_id} is not active"})
-        return
+        from app.models.stream import Stream
+        if not db.session.get(Stream, stream_id):
+            emit("error", {"message": f"Stream {stream_id} not found"})
+            return
 
     join_room(stream_id)
     stream_manager.add_client(stream_id, sid)
