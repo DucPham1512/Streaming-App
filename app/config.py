@@ -66,7 +66,7 @@ class Config:
 class DevelopmentConfig(Config):
     """Development configuration."""
     DEBUG = True
-    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", _default_db_uri())
+    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL") or _default_db_uri()
 
 
 class TestingConfig(Config):
