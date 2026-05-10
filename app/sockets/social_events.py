@@ -69,7 +69,9 @@ def handle_comment_send(data):
     db.session.commit()
 
     logger.info("Comment %d posted in stream %s by user %s", comment.id, stream_id, user.id)
-    emit("comment_received", comment.to_dict(), to=stream_id)
+    payload = comment.to_dict()
+    emit("comment_received", payload)                                   # sender always gets own message
+    emit("comment_received", payload, to=stream_id, include_self=False) # broadcast to other viewers
 
 
 @socketio.on("emote_send")
