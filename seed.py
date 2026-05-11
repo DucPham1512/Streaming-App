@@ -133,7 +133,9 @@ def seed() -> None:
         db.session.commit()
 
         for data in MOCK_USERS:
-            db.session.add(User(**data))
+            user = User(**data)
+            user.set_password("dev-password")
+            db.session.add(user)
 
         for data in MOCK_STREAMS:
             db.session.add(Stream(**data))

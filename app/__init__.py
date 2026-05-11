@@ -47,12 +47,14 @@ def create_app(config_name=None):
     limiter.init_app(application)
     storage_service.init_app(application)
 
+    from app.api.auth_routes import auth_bp
     from app.api.stream_routes import stream_bp
     from app.api.config_routes import config_bp
     from app.api.media_routes import media_bp
     from app.api.comment_routes import comment_bp
     from app.api.follow_routes import follow_bp
 
+    application.register_blueprint(auth_bp)
     application.register_blueprint(stream_bp)
     application.register_blueprint(config_bp)
     application.register_blueprint(media_bp)
