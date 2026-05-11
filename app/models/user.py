@@ -11,6 +11,8 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
+from werkzeug.security import check_password_hash, generate_password_hash
+
 from app.extensions import db
 
 
@@ -46,6 +48,7 @@ class User(db.Model):
         index=True,
         default=_generate_api_key,
     )
+    password_hash = db.Column(db.String(256), nullable=True)
     created_at = db.Column(
         db.DateTime,
         nullable=False,
@@ -57,6 +60,18 @@ class User(db.Model):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+    def set_password(self, password: str) -> None:
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password: str) -> bool:
+        if not self.password_hash:
+            return False
+        return check_password_hash(self.password_hash, password)
+
+    def rotate_api_key(self) -> str:
+        self.api_key = _generate_api_key()
+        return self.api_key
 
     def to_dict(self, *, include_api_key: bool = False) -> dict:
         """Serialize the user to a dictionary.
