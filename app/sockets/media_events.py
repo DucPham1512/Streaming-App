@@ -67,13 +67,22 @@ def handle_audio_chunk(data):
 _COMMAND_EFFECTS: dict[str, str] = {
     "mute_toggle":             "mute",
     "end_stream":              "end_stream",
-    "like_stream":             "heart_flood",
+    "like_stream":             "like",
     "entertainment_confetti":  "confetti",
     "entertainment_heart":     "heart_burst",
     "entertainment_fireworks": "fireworks",
 }
 
 _VALID_COMMANDS = frozenset(_COMMAND_EFFECTS.keys())
+
+# Approximate Mux HLS playback delay. Effects are buffered server-side for
+# this many seconds so viewers see the visual effect at the same moment
+# their video shows the streamer performing the gesture.
+# end_stream and mute_toggle are control commands — they fire immediately
+# (we'd rather end the stream early than have it linger after the streamer
+# already walked away).
+EFFECT_BROADCAST_DELAY_SECONDS = 22
+_INSTANT_COMMANDS = frozenset({"end_stream", "mute_toggle"})
 
 
 @socketio.on("gesture_command_received")
@@ -87,6 +96,7 @@ def handle_gesture_command(data):
     an `effect` field so the React Native app knows which animation to play.
     """
     sid = flask_request.sid
+    logger.info("gesture_command_received raw payload from %s: %r", sid, data)
 
     if not isinstance(data, dict):
         emit("error", {"message": "Gesture command must be a JSON object"})
@@ -115,20 +125,28 @@ def handle_gesture_command(data):
         "status": "received",
     })
 
-    # Broadcast to all viewers in the room, including the effect type
-    emit(
-        "stream_state_update",
-        {
-            "command": command,
-            "effect": _COMMAND_EFFECTS[command],
-            "confidence": confidence,
-            "stream_id": stream_id,
-            "triggered_by": sid,
-        },
-        to=stream_id,
-    )
+    payload = {
+        "command": command,
+        "effect": _COMMAND_EFFECTS[command],
+        "confidence": confidence,
+        "stream_id": stream_id,
+        "triggered_by": sid,
+    }
 
+    if command in _INSTANT_COMMANDS:
+        emit("stream_state_update", payload, to=stream_id)
+    else:
+        # Buffer entertainment effects so they line up with the delayed HLS video
+        def _delayed_broadcast():
+            socketio.sleep(EFFECT_BROADCAST_DELAY_SECONDS)
+            socketio.emit("stream_state_update", payload, to=stream_id)
+
+        socketio.start_background_task(_delayed_broadcast)
+
+    # Debug: how many sockets are currently in this room?
+    room_members = socketio.server.manager.rooms.get("/", {}).get(stream_id, {})
+    member_count = len(room_members) if room_members else 0
     logger.info(
-        "Gesture command '%s' (confidence=%.2f) from %s in stream %s",
-        command, confidence, sid, stream_id,
+        "Gesture '%s' from %s -> broadcast to room %s (%d members): %s",
+        command, sid, stream_id, member_count, list(room_members) if room_members else [],
     )

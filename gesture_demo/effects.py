@@ -13,20 +13,6 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Landmark drawing helpers
-# ---------------------------------------------------------------------------
-
-def draw_landmarks(frame, hand_landmarks, mp_drawing, mp_hands, mp_styles):
-    mp_drawing.draw_landmarks(
-        frame,
-        hand_landmarks,
-        mp_hands.HAND_CONNECTIONS,
-        mp_styles.get_default_hand_landmarks_style(),
-        mp_styles.get_default_hand_connections_style(),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Gesture label + cooldown arc
 # ---------------------------------------------------------------------------
 
@@ -124,6 +110,69 @@ class HeartEffect:
         cv2.addWeighted(overlay, alpha * 0.85, frame, 1 - alpha * 0.85, 0, frame)
         cv2.polylines(frame, [pts], True, (100, 60, 255), 2, cv2.LINE_AA)
 
+        self.frame += 1
+
+
+# ---------------------------------------------------------------------------
+# Like (thumbs-up) effect
+# ---------------------------------------------------------------------------
+
+class LikeEffect:
+    """Big thumbs-up emoji-style badge that pops in at center then fades out."""
+
+    LIFETIME = 40
+
+    def __init__(self, w: int, h: int):
+        self.cx, self.cy = w // 2, h // 2
+        self.frame = 0
+
+    @property
+    def alive(self) -> bool:
+        return self.frame < self.LIFETIME
+
+    def draw(self, frame):
+        if not self.alive:
+            return
+        progress = self.frame / self.LIFETIME
+        # Pop-in scale: snaps up fast then settles
+        scale = min(1.0, progress * 3.0) * (1.0 + 0.15 * math.sin(progress * math.pi))
+        alpha = 1.0 - progress
+
+        size = int(80 * scale)
+        if size < 2:
+            self.frame += 1
+            return
+
+        cx, cy = self.cx, self.cy
+        overlay = frame.copy()
+
+        # Yellow circle background
+        cv2.circle(overlay, (cx, cy), size, (0, 200, 255), -1)
+        cv2.circle(overlay, (cx, cy), size, (255, 255, 255), max(2, size // 20))
+
+        # Thumb shape (simple stylized): a vertical rectangle with a rounded top
+        # representing the thumb, and a square fist below.
+        thumb_w = size // 3
+        thumb_h = int(size * 0.9)
+        fist_w  = int(size * 0.85)
+        fist_h  = int(size * 0.55)
+
+        # Fist (lower)
+        fx1 = cx - fist_w // 2
+        fy1 = cy + size // 6
+        fx2 = cx + fist_w // 2
+        fy2 = fy1 + fist_h
+        cv2.rectangle(overlay, (fx1, fy1), (fx2, fy2), (255, 255, 255), -1)
+
+        # Thumb (upper, slightly left of center for natural look)
+        tx1 = cx - thumb_w // 2 - size // 12
+        ty2 = fy1 + 2
+        tx2 = tx1 + thumb_w
+        ty1 = ty2 - thumb_h
+        cv2.rectangle(overlay, (tx1, ty1 + thumb_w // 2), (tx2, ty2), (255, 255, 255), -1)
+        cv2.circle(overlay, ((tx1 + tx2) // 2, ty1 + thumb_w // 2), thumb_w // 2, (255, 255, 255), -1)
+
+        cv2.addWeighted(overlay, alpha * 0.9, frame, 1 - alpha * 0.9, 0, frame)
         self.frame += 1
 
 

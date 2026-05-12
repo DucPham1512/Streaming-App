@@ -38,6 +38,7 @@ class GestureClient:
         self._sio.on("disconnect", self._on_disconnect)
         self._sio.on("gesture_ack", self._on_ack)
         self._sio.on("connect_error", self._on_error)
+        self._sio.on("error", lambda d: print(f"[GestureClient] SERVER ERROR: {d}"))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -75,6 +76,7 @@ class GestureClient:
         Returns True if sent, False if on cooldown or not connected.
         """
         if not self._connected:
+            print(f"[GestureClient] DROP {command}: not connected")
             return False
 
         cooldown = COMMAND_COOLDOWNS.get(command, DEFAULT_COOLDOWN)
@@ -83,6 +85,7 @@ class GestureClient:
         with self._lock:
             last = self._last_sent.get(command, 0.0)
             if now - last < cooldown:
+                print(f"[GestureClient] DROP {command}: cooldown {cooldown - (now - last):.1f}s left")
                 return False
             self._last_sent[command] = now
 
@@ -95,6 +98,7 @@ class GestureClient:
                     "stream_id": stream_id,
                 },
             )
+            print(f"[GestureClient] SENT {command} stream={stream_id[:8]}...")
             return True
         except Exception as e:
             print(f"[GestureClient] Emit error: {e}")

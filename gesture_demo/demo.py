@@ -15,6 +15,9 @@ import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
+import json
 
 import cv2
 import dotenv
@@ -22,10 +25,10 @@ import numpy as np
 
 dotenv.load_dotenv()
 
-from detector import GestureDetector, GESTURE_COMMANDS
+from detector import GestureDetector, GESTURE_COMMANDS, draw_landmarks
 from effects import (
-    draw_landmarks, draw_gesture_label, draw_end_countdown,
-    HeartEffect, ConfettiEffect, FireworksEffect,
+    draw_gesture_label, draw_end_countdown,
+    HeartEffect, ConfettiEffect, FireworksEffect, LikeEffect,
 )
 from client import GestureClient
 
@@ -35,8 +38,50 @@ from client import GestureClient
 # ---------------------------------------------------------------------------
 
 SOCKET_URL  = os.getenv("SOCKET_URL", "http://localhost:5001")
+API_BASE    = os.getenv("API_BASE", SOCKET_URL)
 API_KEY     = os.getenv("API_KEY", "")
 WINDOW_NAME = "Gesture Demo  |  Press Q to quit"
+
+
+def _http_request(method: str, path: str, body: dict | None = None) -> dict | None:
+    """Tiny stdlib HTTP helper. Returns parsed JSON or None on error."""
+    url = f"{API_BASE.rstrip('/')}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if API_KEY:
+        req.add_header("Authorization", f"Bearer {API_KEY}")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        print(f"[HTTP {method} {path}] {e.code}: {e.read().decode()[:200]}")
+    except Exception as e:
+        print(f"[HTTP {method} {path}] {e}")
+    return None
+
+
+def discover_active_stream_id() -> str | None:
+    """Hit GET /api/v1/streams and return the most recently started active stream."""
+    result = _http_request("GET", "/api/v1/streams")
+    if not result:
+        return None
+    streams = result.get("streams") or []
+    if not streams:
+        print("[discover] No active streams found.")
+        return None
+    if len(streams) > 1:
+        print(f"[discover] {len(streams)} active streams — picking most recent.")
+    # list_streams already orders by started_at desc, so streams[0] is newest
+    chosen = streams[0]
+    print(f"[discover] Using stream {chosen['id']} ({chosen.get('title')!r})")
+    return chosen["id"]
+
+
+def end_stream_via_api(stream_id: str) -> bool:
+    """Hit POST /api/v1/streams/<id>/end to actually terminate the stream."""
+    result = _http_request("POST", f"/api/v1/streams/{stream_id}/end")
+    return result is not None
 
 # How many frames the fist must be held to trigger end_stream (~3 s at 30 fps)
 END_STREAM_HOLD_FRAMES = 90
@@ -54,6 +99,8 @@ class EffectManager:
     def trigger(self, effect_name: str):
         if effect_name == "heart":
             self._effects.append(HeartEffect(self.w, self.h))
+        elif effect_name == "like":
+            self._effects.append(LikeEffect(self.w, self.h))
         elif effect_name == "confetti":
             self._effects.append(ConfettiEffect(self.w, self.h))
         elif effect_name == "fireworks":
@@ -75,7 +122,7 @@ class EffectManager:
 COMMAND_LOCAL_EFFECT = {
     "mute_toggle":             None,
     "end_stream":              None,
-    "like_stream":             "heart",
+    "like_stream":             "like",
     "entertainment_confetti":  "confetti",
     "entertainment_heart":     "heart",
     "entertainment_fireworks": "fireworks",
@@ -86,10 +133,10 @@ COMMAND_LOCAL_EFFECT = {
 # Main loop
 # ---------------------------------------------------------------------------
 
-def run(stream_id: str, dry_run: bool = False):
-    cap = cv2.VideoCapture(0)
+def run(stream_id: str, dry_run: bool = False, camera: int = 0):
+    cap = cv2.VideoCapture(camera)
     if not cap.isOpened():
-        print("ERROR: Cannot open webcam (device 0). Try --camera 1 if you have multiple cameras.")
+        print(f"ERROR: Cannot open camera {camera}. Try a different --camera index.")
         sys.exit(1)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -127,10 +174,7 @@ def run(stream_id: str, dry_run: bool = False):
 
             # Draw hand skeleton
             if hand_lm:
-                draw_landmarks(
-                    frame, hand_lm,
-                    detector.drawing, detector._mp_hands, detector.drawing_styles,
-                )
+                draw_landmarks(frame, hand_lm)
 
             # -----------------------------------------------------------------
             # Fist hold logic (end stream requires sustained hold)
@@ -171,7 +215,14 @@ def run(stream_id: str, dry_run: bool = False):
             if fist_hold_frames == END_STREAM_HOLD_FRAMES:
                 if not dry_run:
                     client.send_gesture("end_stream", stream_id, confidence=1.0)
-                print("  Gesture: fist            Command: end_stream  (SENT)")
+                    # Socket event alone only broadcasts a message; we also need
+                    # to call the REST endpoint to actually terminate the stream.
+                    if end_stream_via_api(stream_id):
+                        print("  Gesture: fist            Command: end_stream  (TERMINATED)")
+                    else:
+                        print("  Gesture: fist            Command: end_stream  (API call failed)")
+                else:
+                    print("  Gesture: fist            Command: end_stream  (dry-run)")
                 # Small delay to prevent re-trigger
                 fist_hold_frames = END_STREAM_HOLD_FRAMES + 1
 
@@ -262,8 +313,9 @@ def _draw_guide(frame, w: int, h: int):
 def main():
     parser = argparse.ArgumentParser(description="Hand Gesture Demo")
     parser.add_argument(
-        "--stream-id", required=True,
-        help="UUID of the active stream (from POST /api/v1/streams)",
+        "--stream-id", default=None,
+        help="UUID of the stream. If omitted, auto-discovers the most recent "
+             "active stream via GET /api/v1/streams.",
     )
     parser.add_argument(
         "--camera", type=int, default=0,
@@ -275,7 +327,17 @@ def main():
     )
     args = parser.parse_args()
 
-    run(stream_id=args.stream_id, dry_run=args.dry_run)
+    stream_id = args.stream_id
+    if not stream_id and not args.dry_run:
+        stream_id = discover_active_stream_id()
+        if not stream_id:
+            print("ERROR: No --stream-id given and no active stream found via API.")
+            print(f"       Tried: {API_BASE}/api/v1/streams")
+            sys.exit(1)
+    elif not stream_id:
+        stream_id = "dry-run-stream"
+
+    run(stream_id=stream_id, dry_run=args.dry_run, camera=args.camera)
 
 
 if __name__ == "__main__":
