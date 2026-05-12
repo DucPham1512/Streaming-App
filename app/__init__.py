@@ -53,6 +53,7 @@ def create_app(config_name=None):
     from app.api.media_routes import media_bp
     from app.api.comment_routes import comment_bp
     from app.api.follow_routes import follow_bp
+    from app.api.gesture_routes import gesture_bp
 
     application.register_blueprint(auth_bp)
     application.register_blueprint(stream_bp)
@@ -60,6 +61,7 @@ def create_app(config_name=None):
     application.register_blueprint(media_bp)
     application.register_blueprint(comment_bp)
     application.register_blueprint(follow_bp)
+    application.register_blueprint(gesture_bp)
 
     from app.api.webhook_routes import webhook_bp
     application.register_blueprint(webhook_bp)

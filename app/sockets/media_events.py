@@ -63,12 +63,28 @@ def handle_audio_chunk(data):
         logger.info("Subtitle broadcast to room %s: %s", stream_id, text[:80])
 
 
+# Maps a gesture command to the visual effect name sent to viewers.
+_COMMAND_EFFECTS: dict[str, str] = {
+    "mute_toggle":             "mute",
+    "end_stream":              "end_stream",
+    "like_stream":             "heart_flood",
+    "entertainment_confetti":  "confetti",
+    "entertainment_heart":     "heart_burst",
+    "entertainment_fireworks": "fireworks",
+}
+
+_VALID_COMMANDS = frozenset(_COMMAND_EFFECTS.keys())
+
+
 @socketio.on("gesture_command_received")
 def handle_gesture_command(data):
-    """Frontend detected a hand gesture and sends the command.
+    """Gesture detection client sends a recognized hand gesture command.
 
     Expected payload:
-        {"command": "switch_camera", "confidence": 0.95, "stream_id": "<uuid>"}
+        {"command": "entertainment_heart", "confidence": 0.95, "stream_id": "<uuid>"}
+
+    Broadcasts stream_state_update to all viewers in the stream room with
+    an `effect` field so the React Native app knows which animation to play.
     """
     sid = flask_request.sid
 
@@ -84,6 +100,10 @@ def handle_gesture_command(data):
         emit("error", {"message": "'command' field is required"})
         return
 
+    if command not in _VALID_COMMANDS:
+        emit("error", {"message": f"Unknown command '{command}'"})
+        return
+
     if not stream_id or not stream_manager.is_active(stream_id):
         emit("error", {"message": "No active stream for gesture command"})
         return
@@ -95,11 +115,12 @@ def handle_gesture_command(data):
         "status": "received",
     })
 
-    # Broadcast the state change to all viewers in the room
+    # Broadcast to all viewers in the room, including the effect type
     emit(
         "stream_state_update",
         {
             "command": command,
+            "effect": _COMMAND_EFFECTS[command],
             "confidence": confidence,
             "stream_id": stream_id,
             "triggered_by": sid,
