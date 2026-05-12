@@ -84,12 +84,13 @@ def _heart_pts(cx: int, cy: int, size: float, n: int = 80) -> np.ndarray:
 
 
 class HeartEffect:
-    """Draws a pulsing heart at screen center that fades over ~45 frames."""
+    """Pulsing heart that drifts upward from `origin` and fades over ~45 frames."""
 
     LIFETIME = 45
 
-    def __init__(self, w: int, h: int):
-        self.cx, self.cy = w // 2, h // 2
+    def __init__(self, w: int, h: int, origin: tuple[int, int] | None = None):
+        ox, oy = origin if origin is not None else (w // 2, h // 2)
+        self.cx, self.cy = ox, oy
         self.frame = 0
 
     @property
@@ -103,7 +104,9 @@ class HeartEffect:
         size = 8 + 6 * math.sin(progress * math.pi)    # pulse
         alpha = 1.0 - progress
 
-        pts = _heart_pts(self.cx, self.cy, size)
+        # Drift upward from origin over the lifetime
+        cy = int(self.cy - progress * 80)
+        pts = _heart_pts(self.cx, cy, size)
 
         overlay = frame.copy()
         cv2.fillPoly(overlay, [pts], (60, 20, 220))     # BGR red
@@ -118,12 +121,13 @@ class HeartEffect:
 # ---------------------------------------------------------------------------
 
 class LikeEffect:
-    """Big thumbs-up emoji-style badge that pops in at center then fades out."""
+    """Big thumbs-up badge that pops in at `origin` then fades out."""
 
     LIFETIME = 40
 
-    def __init__(self, w: int, h: int):
-        self.cx, self.cy = w // 2, h // 2
+    def __init__(self, w: int, h: int, origin: tuple[int, int] | None = None):
+        ox, oy = origin if origin is not None else (w // 2, h // 2)
+        self.cx, self.cy = ox, oy
         self.frame = 0
 
     @property
@@ -187,26 +191,44 @@ _CONFETTI_COLORS = [
 
 
 class ConfettiEffect:
-    """40 colored rectangles that fall from the top with random drift."""
+    """40 colored rectangles that burst from `origin` and fall with drift."""
 
     LIFETIME = 90
 
-    def __init__(self, w: int, h: int, n: int = 40):
+    def __init__(self, w: int, h: int, n: int = 40, origin: tuple[int, int] | None = None):
         self.w, self.h = w, h
         self.frame = 0
-        self.particles = [
-            {
-                "x": float(random.randint(0, w)),
-                "y": float(random.randint(-h // 2, 0)),
-                "vx": random.uniform(-2, 2),
-                "vy": random.uniform(3, 7),
-                "size": random.randint(6, 14),
-                "angle": random.uniform(0, 360),
-                "spin": random.uniform(-8, 8),
-                "color": random.choice(_CONFETTI_COLORS),
-            }
-            for _ in range(n)
-        ]
+        if origin is None:
+            # Original behavior: fall from above the top of the frame
+            self.particles = [
+                {
+                    "x": float(random.randint(0, w)),
+                    "y": float(random.randint(-h // 2, 0)),
+                    "vx": random.uniform(-2, 2),
+                    "vy": random.uniform(3, 7),
+                    "size": random.randint(6, 14),
+                    "angle": random.uniform(0, 360),
+                    "spin": random.uniform(-8, 8),
+                    "color": random.choice(_CONFETTI_COLORS),
+                }
+                for _ in range(n)
+            ]
+        else:
+            ox, oy = origin
+            # Burst outward from origin with gravity pulling down
+            self.particles = [
+                {
+                    "x": float(ox + random.randint(-12, 12)),
+                    "y": float(oy + random.randint(-12, 12)),
+                    "vx": random.uniform(-6, 6),
+                    "vy": random.uniform(-9, -2),  # initial upward kick
+                    "size": random.randint(6, 14),
+                    "angle": random.uniform(0, 360),
+                    "spin": random.uniform(-8, 8),
+                    "color": random.choice(_CONFETTI_COLORS),
+                }
+                for _ in range(n)
+            ]
 
     @property
     def alive(self) -> bool:
@@ -220,10 +242,12 @@ class ConfettiEffect:
         for p in self.particles:
             p["x"] += p["vx"]
             p["y"] += p["vy"]
+            p["vy"] += 0.35  # gravity
             p["angle"] += p["spin"]
             if p["y"] > self.h + 20:
                 p["y"] = -20
                 p["x"] = random.randint(0, self.w)
+                p["vy"] = random.uniform(3, 7)
 
             s = p["size"]
             cx, cy = int(p["x"]), int(p["y"])
@@ -243,23 +267,45 @@ class ConfettiEffect:
 # ---------------------------------------------------------------------------
 
 class FireworksEffect:
-    """Radial burst of lines expanding outward from screen center."""
+    """Radial bursts. If `origin` given, primary burst is at origin and
+    secondary bursts cluster nearby."""
 
     LIFETIME = 60
 
-    def __init__(self, w: int, h: int, n_bursts: int = 3):
-        self.cx, self.cy = w // 2, h // 2
+    def __init__(
+        self,
+        w: int,
+        h: int,
+        n_bursts: int = 3,
+        origin: tuple[int, int] | None = None,
+    ):
         self.frame = 0
-        self.bursts = [
-            {
-                "cx": random.randint(w // 4, 3 * w // 4),
-                "cy": random.randint(h // 4, 3 * h // 4),
-                "delay": i * 15,
-                "color": random.choice(_CONFETTI_COLORS),
-                "n_rays": random.randint(10, 18),
-            }
-            for i in range(n_bursts)
-        ]
+        if origin is None:
+            self.bursts = [
+                {
+                    "cx": random.randint(w // 4, 3 * w // 4),
+                    "cy": random.randint(h // 4, 3 * h // 4),
+                    "delay": i * 15,
+                    "color": random.choice(_CONFETTI_COLORS),
+                    "n_rays": random.randint(10, 18),
+                }
+                for i in range(n_bursts)
+            ]
+        else:
+            ox, oy = origin
+            self.bursts = []
+            for i in range(n_bursts):
+                jitter = 0 if i == 0 else random.randint(60, 140)
+                ang = random.uniform(0, 2 * math.pi)
+                bx = int(ox + math.cos(ang) * jitter)
+                by = int(oy + math.sin(ang) * jitter)
+                self.bursts.append({
+                    "cx": max(20, min(w - 20, bx)),
+                    "cy": max(20, min(h - 20, by)),
+                    "delay": i * 15,
+                    "color": random.choice(_CONFETTI_COLORS),
+                    "n_rays": random.randint(10, 18),
+                })
 
     @property
     def alive(self) -> bool:

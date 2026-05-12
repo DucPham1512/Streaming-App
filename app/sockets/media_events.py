@@ -85,6 +85,18 @@ EFFECT_BROADCAST_DELAY_SECONDS = 22
 _INSTANT_COMMANDS = frozenset({"end_stream", "mute_toggle"})
 
 
+def _clean_anchor(raw) -> dict | None:
+    """Accept {'x': float, 'y': float} with both in [0, 1]. Return None if malformed."""
+    if not isinstance(raw, dict):
+        return None
+    x, y = raw.get("x"), raw.get("y")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        return None
+    return {"x": float(x), "y": float(y)}
+
+
 @socketio.on("gesture_command_received")
 def handle_gesture_command(data):
     """Gesture detection client sends a recognized hand gesture command.
@@ -125,6 +137,9 @@ def handle_gesture_command(data):
         "status": "received",
     })
 
+    anchor = _clean_anchor(data.get("anchor"))
+    secondary = _clean_anchor(data.get("secondary"))
+
     payload = {
         "command": command,
         "effect": _COMMAND_EFFECTS[command],
@@ -132,6 +147,10 @@ def handle_gesture_command(data):
         "stream_id": stream_id,
         "triggered_by": sid,
     }
+    if anchor is not None:
+        payload["anchor"] = anchor
+    if secondary is not None:
+        payload["secondary"] = secondary
 
     if command in _INSTANT_COMMANDS:
         emit("stream_state_update", payload, to=stream_id)

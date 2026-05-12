@@ -141,6 +141,31 @@ def classify(lm, handedness: str) -> str | None:
     return None
 
 
+# Anchor point selection per gesture. Returns one or two normalized (x, y)
+# points in [0, 1] (MediaPipe's native space, relative to the webcam frame).
+# These are the fingertips/keypoints viewers' effects should originate from.
+def _midpoint(a, b) -> tuple[float, float]:
+    return ((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
+
+
+def anchor_for(
+    gesture: str,
+    lm,
+) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+    """Return (anchor, secondary) normalized points for the given gesture."""
+    if gesture == "finger_heart":
+        return _midpoint(lm[THUMB_TIP], lm[INDEX_TIP]), None
+    if gesture == "thumbs_up":
+        return (lm[THUMB_TIP].x, lm[THUMB_TIP].y), None
+    if gesture == "peace":
+        return _midpoint(lm[8], lm[12]), None
+    if gesture == "ily":
+        return (lm[INDEX_TIP].x, lm[INDEX_TIP].y), (lm[20].x, lm[20].y)
+    if gesture in ("open_palm", "fist"):
+        return (lm[9].x, lm[9].y), None
+    return None, None
+
+
 # Gesture → stream command mapping
 GESTURE_COMMANDS: dict[str, str] = {
     "open_palm":    "mute_toggle",
@@ -209,10 +234,12 @@ class GestureDetector:
     def __exit__(self, *_):
         self._landmarker.close()
 
-    def process(self, rgb_frame) -> tuple[str | None, list | None]:
+    def process(self, rgb_frame):
         """
         Process one RGB frame.
-        Returns (stable_gesture_name | None, landmark_list | None).
+        Returns (stable_gesture_name | None, landmark_list | None,
+                 anchor | None, secondary | None).
+        anchor / secondary are normalized (x, y) tuples or None.
         """
         self._ts_ms += 33  # simulate ~30 fps timestamps
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -220,7 +247,7 @@ class GestureDetector:
 
         if not result.hand_landmarks:
             self._stabilizer.update(None)
-            return None, None
+            return None, None, None, None
 
         landmarks = result.hand_landmarks[0]
         handedness = (
@@ -231,4 +258,7 @@ class GestureDetector:
 
         raw = classify(landmarks, handedness)
         stable = self._stabilizer.update(raw)
-        return stable, landmarks
+        anchor, secondary = (None, None)
+        if stable is not None:
+            anchor, secondary = anchor_for(stable, landmarks)
+        return stable, landmarks, anchor, secondary

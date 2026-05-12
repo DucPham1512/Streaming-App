@@ -96,15 +96,15 @@ class EffectManager:
         self.w, self.h = w, h
         self._effects = []
 
-    def trigger(self, effect_name: str):
+    def trigger(self, effect_name: str, origin: tuple[int, int] | None = None):
         if effect_name == "heart":
-            self._effects.append(HeartEffect(self.w, self.h))
+            self._effects.append(HeartEffect(self.w, self.h, origin=origin))
         elif effect_name == "like":
-            self._effects.append(LikeEffect(self.w, self.h))
+            self._effects.append(LikeEffect(self.w, self.h, origin=origin))
         elif effect_name == "confetti":
-            self._effects.append(ConfettiEffect(self.w, self.h))
+            self._effects.append(ConfettiEffect(self.w, self.h, origin=origin))
         elif effect_name == "fireworks":
-            self._effects.append(FireworksEffect(self.w, self.h))
+            self._effects.append(FireworksEffect(self.w, self.h, origin=origin))
 
     def draw(self, frame):
         for fx in self._effects:
@@ -170,7 +170,7 @@ def run(stream_id: str, dry_run: bool = False, camera: int = 0):
             frame = cv2.flip(frame, 1)   # mirror for natural interaction
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            gesture, hand_lm = detector.process(rgb)
+            gesture, hand_lm, anchor_norm, secondary_norm = detector.process(rgb)
 
             # Draw hand skeleton
             if hand_lm:
@@ -197,24 +197,33 @@ def run(stream_id: str, dry_run: bool = False, camera: int = 0):
                 if gesture is not None:
                     command = GESTURE_COMMANDS.get(gesture)
                     if command and command != "end_stream":
+                        # Convert normalized coords -> pixel coords for the local preview
+                        origin_px = None
+                        if anchor_norm is not None:
+                            origin_px = (int(anchor_norm[0] * w), int(anchor_norm[1] * h))
+
                         sent = False
                         if not dry_run:
-                            sent = client.send_gesture(command, stream_id)
+                            sent = client.send_gesture(
+                                command, stream_id,
+                                anchor=anchor_norm, secondary=secondary_norm,
+                            )
                         else:
                             sent = True
 
                         if sent:
                             local_fx = COMMAND_LOCAL_EFFECT.get(command)
                             if local_fx:
-                                effects.trigger(local_fx)
+                                effects.trigger(local_fx, origin=origin_px)
                             if command == "mute_toggle":
                                 muted = not muted
-                            print(f"  Gesture: {gesture:15s}  Command: {command}")
+                            print(f"  Gesture: {gesture:15s}  Command: {command}  anchor={anchor_norm}")
 
             # Trigger end_stream after full hold
             if fist_hold_frames == END_STREAM_HOLD_FRAMES:
                 if not dry_run:
-                    client.send_gesture("end_stream", stream_id, confidence=1.0)
+                    client.send_gesture("end_stream", stream_id, confidence=1.0,
+                                        anchor=anchor_norm)
                     # Socket event alone only broadcasts a message; we also need
                     # to call the REST endpoint to actually terminate the stream.
                     if end_stream_via_api(stream_id):

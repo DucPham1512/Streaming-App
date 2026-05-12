@@ -70,9 +70,12 @@ class GestureClient:
         command: str,
         stream_id: str,
         confidence: float = 0.95,
+        anchor: tuple[float, float] | None = None,
+        secondary: tuple[float, float] | None = None,
     ) -> bool:
         """
         Emit gesture_command_received.
+        anchor/secondary: normalized (x, y) in [0, 1] from the webcam frame.
         Returns True if sent, False if on cooldown or not connected.
         """
         if not self._connected:
@@ -89,16 +92,19 @@ class GestureClient:
                 return False
             self._last_sent[command] = now
 
+        payload: dict = {
+            "command": command,
+            "confidence": round(confidence, 3),
+            "stream_id": stream_id,
+        }
+        if anchor is not None:
+            payload["anchor"] = {"x": round(anchor[0], 4), "y": round(anchor[1], 4)}
+        if secondary is not None:
+            payload["secondary"] = {"x": round(secondary[0], 4), "y": round(secondary[1], 4)}
+
         try:
-            self._sio.emit(
-                "gesture_command_received",
-                {
-                    "command": command,
-                    "confidence": round(confidence, 3),
-                    "stream_id": stream_id,
-                },
-            )
-            print(f"[GestureClient] SENT {command} stream={stream_id[:8]}...")
+            self._sio.emit("gesture_command_received", payload)
+            print(f"[GestureClient] SENT {command} stream={stream_id[:8]}... anchor={payload.get('anchor')}")
             return True
         except Exception as e:
             print(f"[GestureClient] Emit error: {e}")
