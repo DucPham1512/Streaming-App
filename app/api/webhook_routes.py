@@ -78,9 +78,9 @@ def mux_webhook():
         stream_manager.mark_connected(mux_stream_id)
         log.info(f"Stream {mux_stream_id} marked connected")
 
-    elif event_type == "video.live_stream.active":
+    elif event_type in ("video.live_stream.active", "video.live_stream.recording"):
         stream_manager.mark_active(mux_stream_id)
-        log.info(f"Stream {mux_stream_id} marked active")
+        log.info(f"Stream {mux_stream_id} marked active (via {event_type})")
 
     elif event_type == "video.live_stream.disconnected":
         stream_manager.mark_disconnected(mux_stream_id)

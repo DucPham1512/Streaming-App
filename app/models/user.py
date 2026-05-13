@@ -60,6 +60,8 @@ class User(db.Model):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    stream_key = db.Column(db.String(128), unique=True, nullable=True, index=True, default=None)
+    mux_stream_id = db.Column(db.String(64), unique=True, nullable=True, index=True, default=None)
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -73,7 +75,7 @@ class User(db.Model):
         self.api_key = _generate_api_key()
         return self.api_key
 
-    def to_dict(self, *, include_api_key: bool = False) -> dict:
+    def to_dict(self, *, include_api_key: bool = False, include_stream_key: bool = False) -> dict:
         """Serialize the user to a dictionary.
 
         api_key is excluded by default — only the user themselves should ever
@@ -92,4 +94,6 @@ class User(db.Model):
         }
         if include_api_key:
             data["api_key"] = self.api_key
+        if include_stream_key:
+            data["stream_key"] = self.stream_key
         return data

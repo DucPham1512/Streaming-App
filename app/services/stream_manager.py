@@ -13,27 +13,51 @@ class StreamManager:
         self._active_streams: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-    def create_stream(self, title="Untitled Stream", description="", privacy="public"):
-        """Create a Mux live stream + persist a local record.
+    def create_stream(self, title="Untitled Stream", description="", privacy="public", user=None):
+        """Create a livestream session.
 
-        Raises mux_service.MuxServiceError if the Mux API call fails.
+        Each user gets one persistent Mux live stream. The first call provisions
+        it and stores stream_key + mux_stream_id on the user. Subsequent calls
+        reuse the same Mux resource so the broadcaster's RTMP credentials never
+        change and prior sessions have no playback.
+
+        Raises mux_service.MuxServiceError if a Mux API call is required and fails.
         """
-        # Call Mux first — if it fails, we don't want a half-created DB record
-        mux_stream = mux_service.create_live_stream()
+        if user is not None and user.mux_stream_id:
+            # Reuse the user's existing Mux live stream — no new API call needed.
+            mux_stream_id = user.mux_stream_id
+            mux_stream_key = user.stream_key
+            # Retrieve the playback ID from the first stream record that has one.
+            original = (
+                Stream.query
+                .filter(
+                    Stream.mux_stream_id == mux_stream_id,
+                    Stream.mux_playback_id.isnot(None),
+                )
+                .first()
+            )
+            mux_playback_id = original.mux_playback_id if original else None
+        else:
+            mux_stream = mux_service.create_live_stream()
+            mux_stream_id = mux_stream.mux_stream_id
+            mux_stream_key = mux_stream.stream_key
+            mux_playback_id = mux_stream.playback_id
+
+            if user is not None:
+                user.stream_key = mux_stream_key
+                user.mux_stream_id = mux_stream_id
 
         stream = Stream(
             title=title,
             description=description,
             privacy=privacy,
             status="idle",
-            mux_stream_id=mux_stream.mux_stream_id,
-            mux_playback_id=mux_stream.playback_id,
-            mux_stream_key=mux_stream.stream_key,
+            mux_stream_id=mux_stream_id,
+            mux_playback_id=mux_playback_id,
+            mux_stream_key=mux_stream_key,
         )
         db.session.add(stream)
         db.session.commit()
-
-        # Note: don't add to active_streams yet — wait for Mux 'active' webhook
         return stream
 
     def update_stream(self, stream_id, **kwargs):
@@ -76,8 +100,13 @@ class StreamManager:
 
     def mark_active(self, mux_stream_id: str):
         """Called by webhook handler on 'video.live_stream.active'."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
-        if stream is None or stream.status == "ended":
+        stream = (
+            Stream.query
+            .filter(Stream.mux_stream_id == mux_stream_id, Stream.status != "ended")
+            .order_by(Stream.created_at.desc())
+            .first()
+        )
+        if stream is None:
             return None
 
         stream.status = "active"
@@ -94,17 +123,38 @@ class StreamManager:
 
     def mark_disconnected(self, mux_stream_id: str):
         """Called on 'video.live_stream.disconnected' — temporary state, do NOT end."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
-        if stream is None or stream.status == "ended":
+        stream = (
+            Stream.query
+            .filter(
+                Stream.mux_stream_id == mux_stream_id,
+                Stream.status.in_(["active", "connected"]),
+            )
+            .order_by(Stream.created_at.desc())
+            .first()
+        )
+        if stream is None:
             return None
         stream.status = "disconnected"
         db.session.commit()
         return stream
 
     def mark_idle(self, mux_stream_id: str):
-        """Called on 'video.live_stream.idle' — Mux's reconnect window expired."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
-        if stream is None or stream.status == "ended":
+        """Called on 'video.live_stream.idle' — Mux's reconnect window expired.
+
+        Only end streams that actually started (active/connected/disconnected).
+        A freshly-created stream sitting in 'idle' status was never connected,
+        so an idle webhook from a prior session must not kill it.
+        """
+        stream = (
+            Stream.query
+            .filter(
+                Stream.mux_stream_id == mux_stream_id,
+                Stream.status.in_(["active", "connected", "disconnected"]),
+            )
+            .order_by(Stream.created_at.desc())
+            .first()
+        )
+        if stream is None:
             return None
         stream.status = "ended"
         stream.ended_at = datetime.now(timezone.utc)
@@ -141,8 +191,13 @@ class StreamManager:
         
     def mark_connected(self, mux_stream_id: str):
         """Called on 'video.live_stream.connected' — broadcaster connected but not yet active."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
-        if stream is None or stream.status == "ended":
+        stream = (
+            Stream.query
+            .filter(Stream.mux_stream_id == mux_stream_id, Stream.status != "ended")
+            .order_by(Stream.created_at.desc())
+            .first()
+        )
+        if stream is None:
             return None
         # Only transition idle → connected; don't downgrade from active
         if stream.status == "idle":

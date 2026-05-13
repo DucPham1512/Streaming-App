@@ -124,8 +124,75 @@ def logout():
 @auth_bp.get("/me")
 @require_auth
 def me():
-    """Return the authenticated user's profile.
+    """Return the authenticated user's profile including their stream key."""
+    return jsonify({"user": g.current_user.to_dict(include_stream_key=True)}), 200
 
-    Returns 200 ``{user}`` on success.
+
+@auth_bp.patch("/me")
+@require_auth
+def update_me():
+    """Update display_name, bio, email, or avatar_media_id.
+
+    Request JSON (all fields optional)
+    -----------------------------------
+    display_name   : str
+    bio            : str
+    email          : str
+    avatar_media_id: str | null
     """
-    return jsonify({"user": g.current_user.to_dict()}), 200
+    user = g.current_user
+    data = request.get_json(silent=True) or {}
+
+    if "display_name" in data:
+        user.display_name = (data["display_name"] or "").strip() or None
+    if "bio" in data:
+        user.bio = (data["bio"] or "").strip() or None
+    if "email" in data:
+        email = (data["email"] or "").strip().lower()
+        if email and not _EMAIL_RE.match(email):
+            raise InvalidField("email must be a valid address", field="email")
+        if email and email != user.email:
+            if User.query.filter_by(email=email).first():
+                raise InvalidField("email is already registered", field="email")
+        user.email = email or None
+    if "avatar_media_id" in data:
+        mid = data["avatar_media_id"]
+        if mid is None:
+            user.avatar_media_id = None
+        else:
+            from app.models.media import MediaItem
+            item = MediaItem.query.filter_by(id=mid, owner_id=user.id, deleted_at=None).first()
+            if item is None:
+                raise InvalidField("Media item not found or not owned by you", field="avatar_media_id")
+            user.avatar_media_id = mid
+
+    db.session.commit()
+    return jsonify({"user": user.to_dict(include_stream_key=True)}), 200
+
+
+@auth_bp.post("/change-password")
+@require_auth
+def change_password():
+    """Change the authenticated user's password.
+
+    Request JSON
+    ------------
+    current_password : str
+    new_password     : str — at least 8 characters
+    """
+    user = g.current_user
+    data = request.get_json(silent=True) or {}
+
+    current_password = data.get("current_password") or ""
+    new_password = data.get("new_password") or ""
+
+    if not user.check_password(current_password):
+        raise InvalidField("Current password is incorrect", field="current_password")
+    if len(new_password) < 8:
+        raise InvalidField("New password must be at least 8 characters", field="new_password")
+    if len(new_password) > 128:
+        raise InvalidField("New password must be at most 128 characters", field="new_password")
+
+    user.set_password(new_password)
+    db.session.commit()
+    return jsonify({"message": "Password changed successfully"}), 200

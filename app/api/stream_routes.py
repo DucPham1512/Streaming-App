@@ -9,15 +9,17 @@ GET    /api/v1/streams/<stream_id>  — Get stream details (convenience)
 GET    /api/v1/streams              — List active streams (convenience)
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, request, jsonify
 from app.services import mux_service
 from app.models.stream import Stream
 from app.services.stream_manager import stream_manager
+from app.services.auth_service import current_user_optional, require_auth
 
 stream_bp = Blueprint("streams", __name__, url_prefix="/api/v1/streams")
 
 
 @stream_bp.route("", methods=["POST"])
+@require_auth
 def create_stream():
     """Initialize a new livestream session."""
     data = request.get_json(silent=True) or {}
@@ -31,13 +33,11 @@ def create_stream():
 
     try:
         stream = stream_manager.create_stream(
-            title=title, description=description, privacy=privacy
+            title=title, description=description, privacy=privacy, user=g.current_user
         )
     except mux_service.MuxServiceError as e:
         return jsonify({"error": "Failed to provision stream", "detail": str(e)}), 502
 
-    # include_secrets=True is critical here: this is the ONLY place the
-    # stream key is returned. List/get endpoints must never expose it.
     return jsonify({"stream": stream.to_dict(include_secrets=True)}), 201
 
 
