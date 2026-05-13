@@ -1,0 +1,5 @@
+mediapipe==0.10.35
+opencv-python==4.10.0.84
+python-socketio[client]==5.12.0
+python-dotenv==1.0.1
+numpy==1.26.4

@@ -63,14 +63,52 @@ def handle_audio_chunk(data):
         logger.info("Subtitle broadcast to room %s: %s", stream_id, text[:80])
 
 
+# Maps a gesture command to the visual effect name sent to viewers.
+_COMMAND_EFFECTS: dict[str, str] = {
+    "mute_toggle":             "mute",
+    "end_stream":              "end_stream",
+    "like_stream":             "like",
+    "entertainment_confetti":  "confetti",
+    "entertainment_heart":     "heart_burst",
+    "entertainment_fireworks": "fireworks",
+}
+
+_VALID_COMMANDS = frozenset(_COMMAND_EFFECTS.keys())
+
+# Approximate Mux HLS playback delay. Effects are buffered server-side for
+# this many seconds so viewers see the visual effect at the same moment
+# their video shows the streamer performing the gesture.
+# end_stream and mute_toggle are control commands — they fire immediately
+# (we'd rather end the stream early than have it linger after the streamer
+# already walked away).
+EFFECT_BROADCAST_DELAY_SECONDS = 22
+_INSTANT_COMMANDS = frozenset({"end_stream", "mute_toggle"})
+
+
+def _clean_anchor(raw) -> dict | None:
+    """Accept {'x': float, 'y': float} with both in [0, 1]. Return None if malformed."""
+    if not isinstance(raw, dict):
+        return None
+    x, y = raw.get("x"), raw.get("y")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        return None
+    return {"x": float(x), "y": float(y)}
+
+
 @socketio.on("gesture_command_received")
 def handle_gesture_command(data):
-    """Frontend detected a hand gesture and sends the command.
+    """Gesture detection client sends a recognized hand gesture command.
 
     Expected payload:
-        {"command": "switch_camera", "confidence": 0.95, "stream_id": "<uuid>"}
+        {"command": "entertainment_heart", "confidence": 0.95, "stream_id": "<uuid>"}
+
+    Broadcasts stream_state_update to all viewers in the stream room with
+    an `effect` field so the React Native app knows which animation to play.
     """
     sid = flask_request.sid
+    logger.info("gesture_command_received raw payload from %s: %r", sid, data)
 
     if not isinstance(data, dict):
         emit("error", {"message": "Gesture command must be a JSON object"})
@@ -84,6 +122,10 @@ def handle_gesture_command(data):
         emit("error", {"message": "'command' field is required"})
         return
 
+    if command not in _VALID_COMMANDS:
+        emit("error", {"message": f"Unknown command '{command}'"})
+        return
+
     if not stream_id or not stream_manager.is_active(stream_id):
         emit("error", {"message": "No active stream for gesture command"})
         return
@@ -95,19 +137,35 @@ def handle_gesture_command(data):
         "status": "received",
     })
 
-    # Broadcast the state change to all viewers in the room
-    emit(
-        "stream_state_update",
-        {
-            "command": command,
-            "confidence": confidence,
-            "stream_id": stream_id,
-            "triggered_by": sid,
-        },
-        to=stream_id,
-    )
+    anchor = _clean_anchor(data.get("anchor"))
+    secondary = _clean_anchor(data.get("secondary"))
 
+    payload = {
+        "command": command,
+        "effect": _COMMAND_EFFECTS[command],
+        "confidence": confidence,
+        "stream_id": stream_id,
+        "triggered_by": sid,
+    }
+    if anchor is not None:
+        payload["anchor"] = anchor
+    if secondary is not None:
+        payload["secondary"] = secondary
+
+    if command in _INSTANT_COMMANDS:
+        emit("stream_state_update", payload, to=stream_id)
+    else:
+        # Buffer entertainment effects so they line up with the delayed HLS video
+        def _delayed_broadcast():
+            socketio.sleep(EFFECT_BROADCAST_DELAY_SECONDS)
+            socketio.emit("stream_state_update", payload, to=stream_id)
+
+        socketio.start_background_task(_delayed_broadcast)
+
+    # Debug: how many sockets are currently in this room?
+    room_members = socketio.server.manager.rooms.get("/", {}).get(stream_id, {})
+    member_count = len(room_members) if room_members else 0
     logger.info(
-        "Gesture command '%s' (confidence=%.2f) from %s in stream %s",
-        command, confidence, sid, stream_id,
+        "Gesture '%s' from %s -> broadcast to room %s (%d members): %s",
+        command, sid, stream_id, member_count, list(room_members) if room_members else [],
     )
