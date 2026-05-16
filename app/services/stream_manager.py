@@ -2,10 +2,11 @@
 
 import threading
 from datetime import datetime, timezone
+from typing import Optional
 
 from app.extensions import db
 from app.models.stream import Stream
-from app.services import mux_service
+from app.services import livekit_service
 
 
 class StreamManager:
@@ -13,28 +14,49 @@ class StreamManager:
         self._active_streams: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-    def create_stream(self, title="Untitled Stream", description="", privacy="public"):
-        """Create a Mux live stream + persist a local record.
+    def create_stream(
+        self,
+        title: str = "Untitled Stream",
+        description: str = "",
+        privacy: str = "public",
+        *,
+        owner_identity: Optional[str] = None,
+        owner_display_name: Optional[str] = None,
+    ) -> tuple[Stream, str, str]:
+        """Create a Stream row + provision the matching LiveKit room.
 
-        Raises mux_service.MuxServiceError if the Mux API call fails.
+        Returns a tuple of (stream, publisher_token, livekit_url). The
+        publisher_token is sensitive — return it only to the broadcaster
+        that just initiated the stream.
+
+        Raises livekit_service.LiveKitServiceError if the LiveKit API call fails.
         """
-        # Call Mux first — if it fails, we don't want a half-created DB record
-        mux_stream = mux_service.create_live_stream()
-
+        # Insert the Stream row first so its UUID can name the LiveKit room.
         stream = Stream(
             title=title,
             description=description,
             privacy=privacy,
             status="idle",
-            mux_stream_id=mux_stream.mux_stream_id,
-            mux_playback_id=mux_stream.playback_id,
-            mux_stream_key=mux_stream.stream_key,
         )
         db.session.add(stream)
-        db.session.commit()
+        db.session.flush()  # populate stream.id without committing yet
 
-        # Note: don't add to active_streams yet — wait for Mux 'active' webhook
-        return stream
+        # If no identity was supplied (anonymous create), derive a stable one
+        # from the stream id so reconnects land on the same participant slot.
+        identity = owner_identity or f"publisher-{stream.id[:8]}"
+
+        try:
+            created = livekit_service.create_stream_room(
+                stream_id=stream.id,
+                owner_identity=identity,
+                owner_display_name=owner_display_name,
+            )
+        except livekit_service.LiveKitServiceError:
+            db.session.rollback()
+            raise
+
+        db.session.commit()
+        return stream, created.publisher_token, created.livekit_url
 
     def update_stream(self, stream_id, **kwargs):
         stream = db.session.get(Stream, stream_id)
@@ -49,19 +71,19 @@ class StreamManager:
         db.session.commit()
         return stream
 
-    def end_stream(self, stream_id):
-        """Terminate a stream — signals Mux + marks DB record ended."""
+    def end_stream(self, stream_id: str):
+        """Terminate a stream — deletes the LiveKit room + marks DB record ended."""
         stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
 
-        # Tell Mux to disconnect the broadcaster (idempotent)
-        if stream.mux_stream_id:
-            try:
-                mux_service.end_live_stream(stream.mux_stream_id)
-            except mux_service.MuxServiceError:
-                # Log but don't block the local end — Mux state will reconcile via webhook
-                pass
+        # Disconnect all participants by deleting the room (idempotent).
+        try:
+            livekit_service.delete_stream_room(stream.id)
+        except livekit_service.LiveKitServiceError:
+            # Log-and-continue: the DB state must reflect 'ended' even if
+            # LiveKit cleanup fails; webhook reconciliation will catch up.
+            pass
 
         stream.status = "ended"
         stream.ended_at = datetime.now(timezone.utc)
@@ -73,10 +95,24 @@ class StreamManager:
         return stream
 
     # ---- Webhook-driven state transitions ----
+    #
+    # These accept the local Stream.id (= LiveKit room name) — the webhook
+    # handler resolves the LiveKit event's `room.name` to that before calling.
 
-    def mark_active(self, mux_stream_id: str):
-        """Called by webhook handler on 'video.live_stream.active'."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+    def mark_connected(self, stream_id: str):
+        """Publisher joined the room but hasn't published a track yet."""
+        stream = db.session.get(Stream, stream_id)
+        if stream is None or stream.status == "ended":
+            return None
+        # Only transition idle → connected; don't downgrade from active.
+        if stream.status == "idle":
+            stream.status = "connected"
+            db.session.commit()
+        return stream
+
+    def mark_active(self, stream_id: str):
+        """Publisher published a video track — stream is now watchable."""
+        stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
 
@@ -92,18 +128,18 @@ class StreamManager:
             })
         return stream
 
-    def mark_disconnected(self, mux_stream_id: str):
-        """Called on 'video.live_stream.disconnected' — temporary state, do NOT end."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+    def mark_disconnected(self, stream_id: str):
+        """Publisher participant left — transient; the room may still be reused."""
+        stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
         stream.status = "disconnected"
         db.session.commit()
         return stream
 
-    def mark_idle(self, mux_stream_id: str):
-        """Called on 'video.live_stream.idle' — Mux's reconnect window expired."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
+    def mark_ended(self, stream_id: str):
+        """Room was finished (LiveKit `room_finished` event)."""
+        stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
         stream.status = "ended"
@@ -114,7 +150,11 @@ class StreamManager:
             self._active_streams.pop(stream.id, None)
         return stream
 
-    # ---- Existing in-memory registry methods (unchanged) ----
+    # DEPRECATED: kept so the legacy Mux webhook handler (rewired in Commit 4)
+    # still calls a real method instead of raising AttributeError. Remove in Commit 4.
+    mark_idle = mark_ended
+
+    # ---- In-memory active-clients registry (unchanged) ----
 
     def get_stream(self, stream_id):
         return db.session.get(Stream, stream_id)
@@ -138,16 +178,6 @@ class StreamManager:
     def get_active_stream_ids(self):
         with self._lock:
             return list(self._active_streams.keys())
-        
-    def mark_connected(self, mux_stream_id: str):
-        """Called on 'video.live_stream.connected' — broadcaster connected but not yet active."""
-        stream = Stream.query.filter_by(mux_stream_id=mux_stream_id).first()
-        if stream is None or stream.status == "ended":
-            return None
-        # Only transition idle → connected; don't downgrade from active
-        if stream.status == "idle":
-            stream.status = "connected"
-            db.session.commit()
-        return stream
+
 
 stream_manager = StreamManager()

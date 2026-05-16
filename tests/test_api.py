@@ -13,8 +13,12 @@ class TestStreamRoutes:
         data = resp.get_json()
         assert "stream" in data
         assert data["stream"]["title"] == "Untitled Stream"
-        assert data["stream"]["status"] == "active"
-        assert "ws_token" in data
+        # Newly created streams start idle; webhook 'track_published' flips
+        # them to active. See app/api/webhook_routes.py (Commit 4).
+        assert data["stream"]["status"] == "idle"
+        # Publisher JWT for the broadcaster to publish to the LiveKit room.
+        assert "publisher_token" in data
+        assert "livekit_url" in data
 
     def test_create_stream_with_metadata(self, client):
         """POST /api/v1/streams with custom metadata."""
@@ -101,8 +105,12 @@ class TestStreamRoutes:
 
     def test_list_streams(self, client):
         """GET /api/v1/streams lists active streams."""
-        client.post("/api/v1/streams", content_type="application/json")
-        client.post("/api/v1/streams", content_type="application/json")
+        from app.services.stream_manager import stream_manager
+        r1 = client.post("/api/v1/streams", content_type="application/json")
+        r2 = client.post("/api/v1/streams", content_type="application/json")
+        # Flip both to 'active' as if the LiveKit webhook had fired.
+        stream_manager.mark_active(r1.get_json()["stream"]["id"])
+        stream_manager.mark_active(r2.get_json()["stream"]["id"])
 
         resp = client.get("/api/v1/streams")
         assert resp.status_code == 200
@@ -110,11 +118,15 @@ class TestStreamRoutes:
 
     def test_ended_stream_not_in_list(self, client):
         """Ended streams are removed from the active list."""
+        from app.services.stream_manager import stream_manager
         r1 = client.post("/api/v1/streams", content_type="application/json")
         r2 = client.post("/api/v1/streams", content_type="application/json")
-        stream_id = r1.get_json()["stream"]["id"]
+        s1 = r1.get_json()["stream"]["id"]
+        s2 = r2.get_json()["stream"]["id"]
+        stream_manager.mark_active(s1)
+        stream_manager.mark_active(s2)
 
-        client.post(f"/api/v1/streams/{stream_id}/end")
+        client.post(f"/api/v1/streams/{s1}/end")
 
         resp = client.get("/api/v1/streams")
         assert resp.get_json()["count"] == 1

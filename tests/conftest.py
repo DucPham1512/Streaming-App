@@ -21,6 +21,19 @@ def _aws_credentials():
     os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _livekit_credentials():
+    """Set fake LiveKit creds so token minting works in tests without a server.
+
+    Token minting is fully local (JWT signing) — no LiveKit server is contacted.
+    Room admin (`create_stream_room`, `delete_stream_room`) IS network-bound;
+    tests that exercise those paths should monkeypatch livekit_service.
+    """
+    os.environ.setdefault("LIVEKIT_API_KEY", "devkey")
+    os.environ.setdefault("LIVEKIT_API_SECRET", "test-secret-at-least-32-chars-long-padding")
+    os.environ.setdefault("LIVEKIT_URL", "ws://localhost:7880")
+
+
 @pytest.fixture(scope="session")
 def _moto():
     """Session-wide moto mock so storage_service can be configured once.
@@ -68,6 +81,36 @@ def db(app):
         yield _db
         _db.session.rollback()
         _db.drop_all()
+
+
+@pytest.fixture(autouse=True)
+def _stub_livekit_room_admin(monkeypatch):
+    """Stub LiveKit room admin operations so tests don't hit the network.
+
+    Token minting is left real (it's just local JWT signing). Only the
+    network-bound room.create_room / room.delete_room calls are stubbed.
+    """
+    from app.services import livekit_service
+
+    def _fake_create_room(stream_id, owner_identity, *, owner_display_name=None,
+                          empty_timeout_seconds=300):
+        token = livekit_service.mint_access_token(
+            room_name=stream_id,
+            identity=owner_identity,
+            can_publish=True,
+            display_name=owner_display_name,
+        )
+        return livekit_service.CreatedRoom(
+            room_name=stream_id,
+            publisher_token=token,
+            livekit_url=os.environ["LIVEKIT_URL"],
+        )
+
+    def _fake_delete_room(stream_id):
+        return None
+
+    monkeypatch.setattr(livekit_service, "create_stream_room", _fake_create_room)
+    monkeypatch.setattr(livekit_service, "delete_stream_room", _fake_delete_room)
 
 
 @pytest.fixture(scope="function")
