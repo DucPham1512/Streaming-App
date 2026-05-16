@@ -1,0 +1,29 @@
+# LiveKit Server configuration for LAN demo deployment.
+# Production deployments require TLS + a real domain; see docs/decisions/001-livekit-over-mux.md.
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  # Set to true (with NODE_IP env) when hosting beyond LAN.
+  use_external_ip: false
+
+# Keys are read from env at runtime. LIVEKIT_KEYS must be set as "<key>: <secret>"
+# (e.g. LIVEKIT_KEYS=devkey: <32+ char secret>). See .env.example.
+
+webhook:
+  # api_key here must match a key in LIVEKIT_KEYS so signatures verify.
+  api_key: devkey
+  urls:
+    - http://backend:5001/api/v1/webhooks/livekit
+
+logging:
+  level: info
+
+room:
+  # Auto-create rooms when the first participant joins. We mint tokens on the
+  # backend before clients connect, so we don't need to pre-create rooms.
+  auto_create: true
+  empty_timeout: 300
