@@ -2,8 +2,7 @@
 Wrapper around the LiveKit Server SDK for live stream operations.
 
 All LiveKit API interactions go through this module. Route handlers should NOT
-import livekit.api directly — that keeps the API surface mockable in tests
-and matches the pattern previously used by mux_service.
+import livekit.api directly — that keeps the API surface mockable in tests.
 
 The Python SDK's room admin operations are async (aiohttp under the hood);
 this module hides that behind sync wrappers since Flask route handlers are

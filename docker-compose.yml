@@ -69,11 +69,14 @@ services:
     ports:
       - "5001:5001"
 
-  # broadcaster: activated in Commit 6b-iii (LiveKit publishing worker).
-  # The service is intentionally not declared yet because the code in
-  # broadcaster/ still uses the OBS-RTMP workflow and hasn't been wired to
-  # livekit-rtc publishing yet. Until then run it on the host:
-  #     python broadcaster/demo.py --camera 2
+  # The broadcaster process is NOT a compose service. It needs direct host
+  # access to the camera (/dev/videoN), microphone (PortAudio), and X11 for
+  # cv2.imshow — combining all three through Docker is brittle. It runs on
+  # the host via `python -m broadcaster`. See:
+  #   - docs/decisions/003-python-broadcaster-not-phone.md
+  #   - broadcaster/BROADCASTER.md
+  # `./start.sh` brings up this stack with `docker compose up -d` then execs
+  # `python -m broadcaster` so the user still gets one command.
 
 volumes:
   minio_data:

@@ -16,10 +16,7 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 Mako==1.3.12
 MarkupSafe==3.0.3
-mux_python==5.1.2
 # LiveKit Server SDK (server-side: token minting + room admin).
-# Replaces mux_python; see docs/decisions/001-livekit-over-mux.md.
-# mux_python will be removed in Commit 15 once no code imports it.
 livekit-api>=1.0.0,<2.0.0
 packaging==26.2
 platformdirs
