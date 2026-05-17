@@ -26,12 +26,25 @@ class GestureClient:
     Commands are dropped (not queued) when the cooldown has not elapsed.
     """
 
-    def __init__(self, socket_url: str, api_key: str | None = None):
+    def __init__(
+        self,
+        socket_url: str,
+        api_key: str | None = None,
+        *,
+        on_comment=None,
+    ):
+        """
+        :param on_comment: optional callback ``fn(username: str, content: str)``
+            invoked for each `comment_received` socket event the streamer
+            sees in their room. Used by demo.py to feed the local OpenCV
+            comment overlay (broadcaster/local_view.CommentBuffer).
+        """
         self._url = socket_url
         self._api_key = api_key
         self._last_sent: dict[str, float] = {}
         self._lock = threading.Lock()
         self._connected = False
+        self._on_comment = on_comment
 
         self._sio = socketio.Client(reconnection=True, reconnection_attempts=0)
         self._sio.on("connect", self._on_connect)
@@ -39,6 +52,8 @@ class GestureClient:
         self._sio.on("gesture_ack", self._on_ack)
         self._sio.on("connect_error", self._on_error)
         self._sio.on("error", lambda d: print(f"[GestureClient] SERVER ERROR: {d}"))
+        if on_comment is not None:
+            self._sio.on("comment_received", self._on_comment_received)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -56,6 +71,19 @@ class GestureClient:
     def disconnect(self):
         if self._sio.connected:
             self._sio.disconnect()
+
+    def join_room(self, stream_id: str) -> bool:
+        """Join the Socket.IO room for `stream_id` so we receive room-scoped
+        events (chat comments, viewer counts, etc.) emitted to that room."""
+        if not self._connected:
+            print("[GestureClient] join_room: not connected")
+            return False
+        try:
+            self._sio.emit("join_room", {"stream_id": stream_id})
+            return True
+        except Exception as e:
+            print(f"[GestureClient] join_room error: {e}")
+            return False
 
     @property
     def connected(self) -> bool:
@@ -141,3 +169,20 @@ class GestureClient:
 
     def _on_error(self, data):
         print(f"[GestureClient] Connection error: {data}")
+
+    def _on_comment_received(self, data):
+        """Forward `comment_received` payloads to the streamer's local overlay.
+
+        Backend payload shape (from app/sockets/social_events.py):
+            { "username": "...", "content": "...", ... }
+        Defensive about missing fields — chat shouldn't crash the streamer.
+        """
+        if not callable(self._on_comment):
+            return
+        try:
+            username = (data or {}).get("username", "anon")
+            content = (data or {}).get("content", "")
+            if content:
+                self._on_comment(username, content)
+        except Exception as e:
+            print(f"[GestureClient] comment handler error: {e}")

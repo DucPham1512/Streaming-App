@@ -32,6 +32,13 @@ from effects import (
 )
 from client import GestureClient
 
+# Make the sibling `broadcaster/` package importable. Commit 6b will move
+# this whole file into that package and the path hack goes away.
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, _BACKEND_ROOT)
+from broadcaster.local_view import CommentBuffer, render_comment_column
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -149,12 +156,18 @@ def run(stream_id: str, dry_run: bool = False, camera: int = 0):
     print(f"Stream ID: {stream_id}")
     print(f"Backend: {SOCKET_URL}")
 
+    # Comment buffer fed by the Socket.IO client's `comment_received` handler.
+    # Drawn in the local preview only — never composited into the published frame.
+    comments = CommentBuffer(capacity=8, ttl_seconds=10.0)
+
     # Connect Socket.IO client in background
-    client = GestureClient(SOCKET_URL, API_KEY or None)
+    client = GestureClient(SOCKET_URL, API_KEY or None, on_comment=comments.add)
     if not dry_run:
         t = threading.Thread(target=client.connect, daemon=True)
         t.start()
         time.sleep(1.5)   # give the connection a moment
+        # Subscribe to the stream's room so `comment_received` events reach us.
+        client.join_room(stream_id)
 
     effects = EffectManager(w, h)
     muted = False
@@ -271,6 +284,9 @@ def run(stream_id: str, dry_run: bool = False, camera: int = 0):
 
             # Gesture reference guide (bottom-right)
             _draw_guide(frame, w, h)
+
+            # Scrolling chat overlay (right edge) — local preview only.
+            render_comment_column(frame, comments)
 
             cv2.imshow(WINDOW_NAME, frame)
 
