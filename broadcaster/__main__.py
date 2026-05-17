@@ -43,6 +43,7 @@ dotenv.load_dotenv()
 # For direct script invocation `python broadcaster/__main__.py`, run via
 # `python -m broadcaster` instead.
 from .client import GestureClient
+from .custom_classifier import CustomGestureClassifier
 from .local_view import CommentBuffer
 from .loop import BroadcastLoop
 from .publisher import LiveKitPublisher
@@ -96,6 +97,45 @@ def end_stream(api_base: str, api_key: str | None, stream_id: str) -> bool:
     except Exception as e:
         log.warning("end_stream failed: %s", e)
         return False
+
+
+def fetch_builtins(api_base: str, api_key: str | None) -> dict[str, str]:
+    """GET /api/v1/gestures/builtins. Returns {gesture: effective_action}.
+
+    Falls back to {} (which the caller treats as "use built-in defaults")
+    when auth is missing or the call fails. The broadcaster should not
+    refuse to start just because the gesture-library endpoint is unreachable.
+    """
+    if not api_key:
+        return {}
+    try:
+        resp = _http_json(
+            "GET",
+            f"{api_base.rstrip('/')}/api/v1/gestures/builtins",
+            None,
+            api_key,
+        )
+        return {row["gesture"]: row["action"] for row in resp.get("builtins", [])}
+    except Exception as e:
+        log.warning("fetch_builtins failed (using defaults): %s", e)
+        return {}
+
+
+def fetch_templates(api_base: str, api_key: str | None) -> list[dict]:
+    """GET /api/v1/gestures/templates. Returns [] on failure or no auth."""
+    if not api_key:
+        return []
+    try:
+        resp = _http_json(
+            "GET",
+            f"{api_base.rstrip('/')}/api/v1/gestures/templates",
+            None,
+            api_key,
+        )
+        return resp.get("templates", [])
+    except Exception as e:
+        log.warning("fetch_templates failed (no custom gestures): %s", e)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +216,21 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Stream created: id=%s", stream_id)
     log.info("LiveKit URL: %s", livekit_url)
 
-    # ---- 2. Comment buffer, Socket.IO client, LiveKit publisher ----
+    # ---- 2. Fetch per-user gesture customization (best-effort) ----
+    # builtin_actions: { built-in gesture name -> effective action }.
+    # Empty {} means "use hardcoded defaults from detector.GESTURE_COMMANDS".
+    # templates: list of /gestures/templates rows for the k-NN classifier.
+    builtin_actions = fetch_builtins(api_base, api_key)
+    templates = fetch_templates(api_base, api_key)
+    if builtin_actions:
+        log.info(
+            "Loaded %d built-in overrides for this user", len(builtin_actions)
+        )
+    if templates:
+        log.info("Loaded %d custom gesture template(s)", len(templates))
+    classifier = CustomGestureClassifier(templates) if templates else None
+
+    # ---- 3. Comment buffer, Socket.IO client, LiveKit publisher ----
     comments = CommentBuffer(capacity=8, ttl_seconds=10.0)
     client = GestureClient(socket_url, api_key, on_comment=comments.add)
     publisher = LiveKitPublisher(
@@ -208,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     log.info("LiveKit publisher ready; entering capture loop")
 
-    # ---- 3. Run the capture/composite/publish loop ----
+    # ---- 4. Run the capture/composite/publish loop ----
     loop = BroadcastLoop(
         stream_id=stream_id,
         publisher=publisher,
@@ -218,6 +272,8 @@ def main(argv: list[str] | None = None) -> int:
         width=args.width,
         height=args.height,
         show_preview=not args.no_preview,
+        builtin_actions=builtin_actions,
+        classifier=classifier,
     )
     result = loop.run()
     log.info(
@@ -225,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         result.reason, result.frames_published,
     )
 
-    # ---- 4. Cleanup ----
+    # ---- 5. Cleanup ----
     publisher.stop()
     end_stream(api_base, api_key, stream_id)
     client.disconnect()

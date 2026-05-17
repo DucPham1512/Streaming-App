@@ -125,7 +125,16 @@ class BroadcastLoop:
         width: int = 1280,
         height: int = 720,
         show_preview: bool = True,
+        builtin_actions: Optional[dict] = None,
+        classifier=None,                  # broadcaster.custom_classifier.CustomGestureClassifier
     ):
+        """
+        :param builtin_actions: maps built-in gesture name → effective action
+            (override or default). When None, falls back to the hardcoded
+            GESTURE_COMMANDS in detector.py — no per-user override applied.
+        :param classifier: optional k-NN matcher for user-recorded custom
+            gestures. None disables custom-gesture detection entirely.
+        """
         self._stream_id = stream_id
         self._publisher = publisher
         self._client = client
@@ -134,6 +143,8 @@ class BroadcastLoop:
         self._width = width
         self._height = height
         self._show_preview = show_preview
+        self._builtin_actions = builtin_actions or {}
+        self._classifier = classifier
 
     def run(self) -> LoopResult:
         cap = cv2.VideoCapture(self._camera_index)
@@ -181,10 +192,16 @@ class BroadcastLoop:
                 end_stream_progress = min(1.0, fist_hold_frames / END_STREAM_HOLD_FRAMES)
 
                 # ---- Leading-edge gesture commands ----
+                # Resolve via 3-step priority:
+                #   1. Rule-based built-in detector returned a name.
+                #      → fire user's effective action for it (override or default).
+                #   2. Otherwise, run the custom k-NN classifier each frame.
+                #      → fire the matched template's action when confirmed.
                 if gesture != last_stable_gesture:
                     last_stable_gesture = gesture
                     if gesture is not None:
-                        cmd = GESTURE_COMMANDS.get(gesture)
+                        # Override takes precedence over hardcoded default.
+                        cmd = self._builtin_actions.get(gesture) or GESTURE_COMMANDS.get(gesture)
                         if cmd and cmd != "end_stream":
                             origin_px = None
                             if anchor_norm is not None:
@@ -202,6 +219,35 @@ class BroadcastLoop:
                                     effects.trigger(local_fx, origin=origin_px)
                                 if cmd == "mute_toggle":
                                     muted = not muted
+
+                # ---- Custom k-NN classifier (only runs when no built-in match) ----
+                if (
+                    self._classifier is not None
+                    and gesture is None
+                    and hand_lm is not None
+                ):
+                    custom = self._classifier.classify(hand_lm)
+                    if custom is not None:
+                        log.info(
+                            "Custom gesture '%s' → action '%s'",
+                            custom.name, custom.action,
+                        )
+                        sent = self._client.send_gesture(
+                            custom.action, self._stream_id,
+                            anchor=anchor_norm, secondary=secondary_norm,
+                        )
+                        if sent:
+                            local_fx = COMMAND_LOCAL_EFFECT.get(custom.action)
+                            if local_fx:
+                                origin_px = None
+                                if anchor_norm is not None:
+                                    origin_px = (
+                                        int(anchor_norm[0] * w),
+                                        int(anchor_norm[1] * h),
+                                    )
+                                effects.trigger(local_fx, origin=origin_px)
+                            if custom.action == "mute_toggle":
+                                muted = not muted
 
                 # ---- Full fist hold → end stream ----
                 if fist_hold_frames == END_STREAM_HOLD_FRAMES:
