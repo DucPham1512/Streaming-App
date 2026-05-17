@@ -150,10 +150,6 @@ class StreamManager:
             self._active_streams.pop(stream.id, None)
         return stream
 
-    # DEPRECATED: kept so the legacy Mux webhook handler (rewired in Commit 4)
-    # still calls a real method instead of raising AttributeError. Remove in Commit 4.
-    mark_idle = mark_ended
-
     # ---- In-memory active-clients registry (unchanged) ----
 
     def get_stream(self, stream_id):
