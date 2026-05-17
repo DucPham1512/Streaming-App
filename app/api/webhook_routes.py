@@ -11,8 +11,8 @@ the cleanest "broadcaster is now live" signal — no need to encode the
 publisher role in identity strings.
 
 Idempotency: LiveKit retries failed webhooks, so we may receive
-duplicates. The unique constraint on WebhookEvent.mux_event_id catches
-dupes for free (the column is renamed external_event_id in Commit 5).
+duplicates. The unique constraint on WebhookEvent.external_event_id
+catches dupes for free.
 """
 
 import logging
@@ -52,7 +52,7 @@ def livekit_webhook():
 
     # Idempotency check — record the event, fail fast on duplicates.
     event_record = WebhookEvent(
-        mux_event_id=event_id,  # column renamed external_event_id in Commit 5
+        external_event_id=event_id,
         event_type=event_type,
         payload=raw_body.decode("utf-8"),
     )

@@ -22,5 +22,6 @@ COPY . .
 
 EXPOSE 5001
 
-# Commit 3 will prepend `alembic upgrade head &&` here so the DB is current at boot.
-CMD ["python", "run.py"]
+# Run pending migrations before starting the server so the DB is always
+# in sync at boot — teammates never have to remember `alembic upgrade head`.
+CMD ["sh", "-c", "alembic upgrade head && python run.py"]

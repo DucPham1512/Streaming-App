@@ -30,12 +30,6 @@ class Stream(db.Model):
     #   ended        — terminated, will not resume
     status = db.Column(db.String(20), nullable=False, default="idle")
 
-    # ---- Mux integration fields (DEPRECATED — dropped in Commit 5) ----
-    # No longer written or read. Kept temporarily so the schema doesn't change
-    # mid-PR. Removed by an Alembic migration once Commits 3 and 4 land.
-    mux_stream_id = db.Column(db.String(64), unique=True, nullable=True, index=True)
-    mux_playback_id = db.Column(db.String(64), nullable=True)
-    mux_stream_key = db.Column(db.String(128), nullable=True)
     like_count = db.Column(db.Integer, nullable=False, default=0)
 
     created_at = db.Column(
