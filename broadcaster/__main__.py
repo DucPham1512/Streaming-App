@@ -42,6 +42,7 @@ dotenv.load_dotenv()
 # Imports are relative (package form) so `python -m broadcaster` works.
 # For direct script invocation `python broadcaster/__main__.py`, run via
 # `python -m broadcaster` instead.
+from .api_client import ApiClient
 from .client import GestureClient
 from .custom_classifier import CustomGestureClassifier
 from .local_view import CommentBuffer
@@ -263,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("LiveKit publisher ready; entering capture loop")
 
     # ---- 4. Run the capture/composite/publish loop ----
+    api = ApiClient(api_base, api_key)
     loop = BroadcastLoop(
         stream_id=stream_id,
         publisher=publisher,
@@ -274,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         show_preview=not args.no_preview,
         builtin_actions=builtin_actions,
         classifier=classifier,
+        api_client=api,
     )
     result = loop.run()
     log.info(

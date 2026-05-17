@@ -127,6 +127,7 @@ class BroadcastLoop:
         show_preview: bool = True,
         builtin_actions: Optional[dict] = None,
         classifier=None,                  # broadcaster.custom_classifier.CustomGestureClassifier
+        api_client=None,                  # broadcaster.api_client.ApiClient (for R/E/L)
     ):
         """
         :param builtin_actions: maps built-in gesture name → effective action
@@ -145,6 +146,8 @@ class BroadcastLoop:
         self._show_preview = show_preview
         self._builtin_actions = builtin_actions or {}
         self._classifier = classifier
+        self._api_client = api_client
+        self._recording_session = None  # set when R is pressed
 
     def run(self) -> LoopResult:
         cap = cv2.VideoCapture(self._camera_index)
@@ -183,6 +186,18 @@ class BroadcastLoop:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
                 gesture, hand_lm, anchor_norm, secondary_norm = detector.process(rgb)
+
+                # ---- Advance the recording state machine (R hotkey) ----
+                # Done synchronously per-frame so capture is paced by the
+                # camera, not the wall clock. Skip frames with no hand
+                # detected; the streamer can hold still a beat longer
+                # without breaking the recording.
+                if self._recording_session is not None:
+                    self._recording_session.tick(hand_lm)
+                    if self._recording_session.phase == "done":
+                        self._finalize_recording()
+                    elif self._recording_session.phase == "aborted":
+                        self._recording_session = None
 
                 # ---- Fist-hold for end_stream ----
                 if gesture == "fist":
@@ -277,8 +292,16 @@ class BroadcastLoop:
                         break
                     elif key == ord("m"):
                         muted = not muted
-                    elif key == ord("r"):
+                    elif key == ord("c"):
+                        # 'c' clears effects (used to be 'r' before the
+                        # custom-gesture recording hotkey took 'r').
                         effects.clear()
+                    elif key == ord("r"):
+                        self._start_recording()
+                    elif key == ord("e"):
+                        self._erase_last_template()
+                    elif key == ord("l"):
+                        self._list_templates()
 
         cap.release()
         if self._show_preview:
@@ -326,6 +349,126 @@ class BroadcastLoop:
                 cooldown_pct = self._client.cooldown_fraction(cmd)
         draw_gesture_label(frame, gesture, cooldown_pct)
 
+        # Recording HUD (overrides nothing — drawn centered top)
+        if self._recording_session is not None:
+            self._draw_recording_hud(frame)
+
         # Scrolling comments column (right edge)
         from .local_view import render_comment_column
         render_comment_column(frame, self._comments)
+
+    def _draw_recording_hud(self, frame) -> None:
+        """Center-top banner showing recording phase + sample progress."""
+        h, w = frame.shape[:2]
+        session = self._recording_session
+        if session is None:
+            return
+        phase = session.phase
+        if phase == "countdown":
+            text = session.countdown_label()
+            color = (40, 180, 255)        # amber
+        elif phase == "capturing":
+            text = session.progress_label()
+            color = (60, 220, 60)         # green
+        else:
+            text = "Saving…"
+            color = (200, 200, 200)
+        # Background pill
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)
+        x = (w - tw) // 2
+        y = 60
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x - 16, y - th - 12), (x + tw + 16, y + 12),
+                      (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
+        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_DUPLEX, 0.8,
+                    color, 2, cv2.LINE_AA)
+
+    # ------------------------------------------------------------------
+    # R/E/L hotkey handlers
+    # ------------------------------------------------------------------
+
+    def _start_recording(self) -> None:
+        if self._api_client is None:
+            log.warning("Recording disabled: no api_client provided")
+            return
+        if self._recording_session is not None:
+            log.info("Already recording; ignoring R")
+            return
+        # Pull the name from the terminal. This blocks the camera loop
+        # for a beat — acceptable, the streamer just initiated it.
+        try:
+            print()  # newline so the prompt isn't appended to a log line
+            name = input("Gesture name (blank to cancel): ").strip()
+        except EOFError:
+            return
+        if not name:
+            print("Recording cancelled.")
+            return
+        from .recording import RecordingSession
+        self._recording_session = RecordingSession(name=name)
+        log.info("Recording '%s' — hold the pose...", name)
+
+    def _finalize_recording(self) -> None:
+        session = self._recording_session
+        self._recording_session = None
+        if session is None:
+            return
+        from .recording import upload_recording
+        from .api_client import ApiError
+        try:
+            resp = upload_recording(self._api_client, session)
+            tpl = resp.get("template", {})
+            log.info(
+                "Saved template '%s' (id=%s) with %d samples. "
+                "Assign an action via the FE Gesture Library.",
+                session.name, tpl.get("id"), len(session.samples),
+            )
+        except ApiError as e:
+            log.error("Failed to upload recording: %s", e)
+
+    def _erase_last_template(self) -> None:
+        if self._api_client is None:
+            log.warning("E disabled: no api_client provided")
+            return
+        from .api_client import ApiError
+        try:
+            resp = self._api_client.get("/api/v1/gestures/templates")
+            templates = resp.get("templates", [])
+        except ApiError as e:
+            log.error("List templates failed: %s", e)
+            return
+        if not templates:
+            log.info("No templates to erase.")
+            return
+        # /templates is ordered by created_at desc, so [0] is the newest.
+        newest = templates[0]
+        try:
+            self._api_client.delete(
+                f"/api/v1/gestures/templates/{newest['id']}"
+            )
+            log.info("Erased template '%s'", newest.get("name"))
+        except ApiError as e:
+            log.error("Delete failed: %s", e)
+
+    def _list_templates(self) -> None:
+        if self._api_client is None:
+            log.warning("L disabled: no api_client provided")
+            return
+        from .api_client import ApiError
+        try:
+            resp = self._api_client.get("/api/v1/gestures/templates")
+            templates = resp.get("templates", [])
+        except ApiError as e:
+            log.error("List templates failed: %s", e)
+            return
+        if not templates:
+            print("\nNo templates recorded yet. Press R to record one.\n")
+            return
+        print(f"\n{len(templates)} template(s):")
+        for t in templates:
+            print(
+                f"  - {t['name']:24s}  action={t['action']:24s}  "
+                f"samples={t['sample_count']}  handedness={t['handedness']}"
+            )
+        print()
