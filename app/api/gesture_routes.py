@@ -146,20 +146,22 @@ def delete_mapping(mapping_id):
 @gesture_bp.route("/api/v1/gestures/builtins", methods=["GET"])
 @require_auth
 def list_builtins_effective():
-    overrides = {
-        m.gesture: m.action
+    overrides_by_gesture = {
+        m.gesture: m
         for m in GestureMapping.query.filter_by(user_id=g.current_user.id).all()
     }
     rows = []
     for m in _DEFAULT_MAPPINGS:
         gesture = m["gesture"]
         default_action = m["action"]
-        effective = overrides.get(gesture, default_action)
+        override = overrides_by_gesture.get(gesture)
         rows.append({
             "gesture": gesture,
             "default_action": default_action,
-            "action": effective,
-            "is_overridden": gesture in overrides,
+            "action": override.action if override else default_action,
+            "is_overridden": override is not None,
+            # mapping_id lets the FE call DELETE /gestures/<id> to reset.
+            "mapping_id": override.id if override else None,
         })
     return jsonify({"builtins": rows}), 200
 
