@@ -131,6 +131,21 @@ def main(argv: list[str] | None = None) -> int:
         help="run headless — skip cv2.imshow and keyboard handling",
     )
     parser.add_argument(
+        "--api-base",
+        help="backend REST URL (overrides API_BASE env). Required when "
+             "running on a second laptop pointed at the host machine.",
+    )
+    parser.add_argument(
+        "--socket-url",
+        help="backend Socket.IO URL (overrides SOCKET_URL env, defaults "
+             "to --api-base).",
+    )
+    parser.add_argument(
+        "--api-key",
+        help="Bearer token for authenticated routes (overrides API_KEY env). "
+             "Optional — required only once stream routes are auth-gated.",
+    )
+    parser.add_argument(
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
@@ -141,9 +156,10 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    api_base = os.environ.get("API_BASE", "http://localhost:5001")
-    socket_url = os.environ.get("SOCKET_URL", api_base)
-    api_key = os.environ.get("API_KEY") or None
+    # CLI flags take precedence over env vars; env vars fall back to defaults.
+    api_base = args.api_base or os.environ.get("API_BASE", "http://localhost:5001")
+    socket_url = args.socket_url or os.environ.get("SOCKET_URL", api_base)
+    api_key = args.api_key or os.environ.get("API_KEY") or None
 
     log.info("Backend: %s", api_base)
     log.info("Camera:  index=%d (%dx%d)", args.camera, args.width, args.height)
