@@ -31,13 +31,7 @@ from effects import (
     HeartEffect, ConfettiEffect, FireworksEffect, LikeEffect,
 )
 from client import GestureClient
-
-# Make the sibling `broadcaster/` package importable. Commit 6b will move
-# this whole file into that package and the path hack goes away.
-_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _BACKEND_ROOT not in sys.path:
-    sys.path.insert(0, _BACKEND_ROOT)
-from broadcaster.local_view import CommentBuffer, render_comment_column
+from local_view import CommentBuffer, render_comment_column
 
 
 # ---------------------------------------------------------------------------

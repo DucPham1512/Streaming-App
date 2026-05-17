@@ -69,10 +69,11 @@ services:
     ports:
       - "5001:5001"
 
-  # broadcaster: activated in Commit 6b (LiveKit publishing worker).
-  # The service is intentionally not declared yet because the code lives in
-  # gesture_demo/ today and will move to app/broadcaster/ in that commit.
-  # Until then, run gestures the way you do today: `python gesture_demo/demo.py --camera 2`.
+  # broadcaster: activated in Commit 6b-iii (LiveKit publishing worker).
+  # The service is intentionally not declared yet because the code in
+  # broadcaster/ still uses the OBS-RTMP workflow and hasn't been wired to
+  # livekit-rtc publishing yet. Until then run it on the host:
+  #     python broadcaster/demo.py --camera 2
 
 volumes:
   minio_data:
