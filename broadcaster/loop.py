@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -64,7 +65,7 @@ COMMAND_LOCAL_EFFECT: dict[str, Optional[str]] = {
 }
 
 END_STREAM_HOLD_FRAMES = 90      # ~3s @ 30 fps fist hold to terminate
-WINDOW_NAME = "VSR Broadcaster — Q quit, M mute, R reset effects"
+WINDOW_NAME = "VSR Broadcaster — Q quit, M mute, C clear effects"
 
 
 @dataclass
@@ -147,7 +148,12 @@ class BroadcastLoop:
         self._builtin_actions = builtin_actions or {}
         self._classifier = classifier
         self._api_client = api_client
-        self._recording_session = None  # set when R is pressed
+        self._recording_session = None  # set while a recording is in progress
+        # Cross-thread inbox for recording requests fired by the streamer
+        # dashboard. The socket.io callback runs on a background thread; the
+        # capture loop drains this every frame.
+        self._pending_recording_name: Optional[str] = None
+        self._pending_lock = threading.Lock()
 
     def run(self) -> LoopResult:
         cap = cv2.VideoCapture(self._camera_index)
@@ -184,6 +190,11 @@ class BroadcastLoop:
 
         with GestureDetector() as detector:
             while True:
+                # Pick up any recording request the dashboard fired since the
+                # last frame. Running this on the loop thread keeps RecordingSession
+                # state strictly single-threaded.
+                self._drain_recording_request()
+
                 ret, frame = cap.read()
                 if not ret:
                     log.error("Camera read failed; ending loop")
@@ -301,11 +312,7 @@ class BroadcastLoop:
                     elif key == ord("m"):
                         muted = not muted
                     elif key == ord("c"):
-                        # 'c' clears effects (used to be 'r' before the
-                        # custom-gesture recording hotkey took 'r').
                         effects.clear()
-                    elif key == ord("r"):
-                        self._start_recording()
                     elif key == ord("e"):
                         self._erase_last_template()
                     elif key == ord("l"):
@@ -396,22 +403,62 @@ class BroadcastLoop:
     # R/E/L hotkey handlers
     # ------------------------------------------------------------------
 
-    def _start_recording(self) -> None:
+    def apply_user_identity(
+        self,
+        *,
+        builtin_actions: dict,
+        templates: list,
+        username: str,
+    ) -> None:
+        """Hot-swap the per-user gesture customization.
+
+        Called by __main__'s streamer_authenticated callback after it has
+        refetched data via the now-authenticated ApiClient. Single attribute
+        assignments are atomic under the GIL, so reading the loop thread
+        doesn't need a lock here. The new classifier is built fresh from
+        the templates list (or None if empty).
+
+        :param username: only used for the log line — gives the streamer
+            visible confirmation in the broadcaster's terminal that the
+            login propagated.
+        """
+        from .custom_classifier import CustomGestureClassifier
+        self._builtin_actions = builtin_actions or {}
+        self._classifier = (
+            CustomGestureClassifier(templates) if templates else None
+        )
+        log.info(
+            "Streamer identity applied: user=%s (overrides=%d, templates=%d)",
+            username, len(self._builtin_actions), len(templates or []),
+        )
+
+    def request_recording(self, name: str) -> None:
+        """Thread-safe: queue a recording request from another thread.
+
+        Called by the GestureClient's `on_recording_start` callback (runs
+        on the socket.io thread). The capture loop picks it up at the top
+        of the next frame via `_drain_recording_request`.
+        """
+        name = (name or "").strip()
+        if not name:
+            return
+        with self._pending_lock:
+            if self._pending_recording_name is None:
+                self._pending_recording_name = name
+                log.info("Recording requested: name=%r", name)
+
+    def _drain_recording_request(self) -> None:
+        """If a request is pending, kick off the session. Idempotent."""
+        with self._pending_lock:
+            name = self._pending_recording_name
+            self._pending_recording_name = None
+        if not name:
+            return
         if self._api_client is None:
             log.warning("Recording disabled: no api_client provided")
             return
         if self._recording_session is not None:
-            log.info("Already recording; ignoring R")
-            return
-        # Pull the name from the terminal. This blocks the camera loop
-        # for a beat — acceptable, the streamer just initiated it.
-        try:
-            print()  # newline so the prompt isn't appended to a log line
-            name = input("Gesture name (blank to cancel): ").strip()
-        except EOFError:
-            return
-        if not name:
-            print("Recording cancelled.")
+            log.info("Already recording; ignoring new request %r", name)
             return
         from .recording import RecordingSession
         self._recording_session = RecordingSession(name=name)

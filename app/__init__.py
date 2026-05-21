@@ -69,10 +69,14 @@ def create_app(config_name=None):
     from app.api.streamer_dashboard_routes import streamer_dashboard_bp
     application.register_blueprint(streamer_dashboard_bp)
 
+    from app.api.streamer_gestures_routes import streamer_gestures_bp
+    application.register_blueprint(streamer_gestures_bp)
+
     # Import socket event handlers so they are registered with socketio
     import app.sockets.connection_events  # noqa: F401
     import app.sockets.media_events  # noqa: F401
     import app.sockets.social_events  # noqa: F401
+    import app.sockets.streamer_events  # noqa: F401
 
     _register_error_handlers(application)
     _register_cli(application)

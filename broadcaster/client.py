@@ -32,12 +32,22 @@ class GestureClient:
         api_key: str | None = None,
         *,
         on_comment=None,
+        on_recording_start=None,
+        on_streamer_authenticated=None,
     ):
         """
         :param on_comment: optional callback ``fn(username: str, content: str)``
             invoked for each `comment_received` socket event the streamer
             sees in their room. Used by demo.py to feed the local OpenCV
             comment overlay (broadcaster/local_view.CommentBuffer).
+        :param on_recording_start: optional callback ``fn(name: str)`` invoked
+            when the streamer dashboard fires a `recording_start` event.
+            Runs on the socket.io background thread — the consumer must
+            hand off to the capture loop's thread (e.g. via a queue).
+        :param on_streamer_authenticated: optional callback
+            ``fn(api_key: str, user_id: str, username: str)`` invoked when
+            the dashboard's login propagates over. Runs on the socket.io
+            thread; the consumer should hand off as above.
         """
         self._url = socket_url
         self._api_key = api_key
@@ -45,6 +55,8 @@ class GestureClient:
         self._lock = threading.Lock()
         self._connected = False
         self._on_comment = on_comment
+        self._on_recording_start = on_recording_start
+        self._on_streamer_authenticated = on_streamer_authenticated
 
         self._sio = socketio.Client(reconnection=True, reconnection_attempts=0)
         self._sio.on("connect", self._on_connect)
@@ -54,6 +66,21 @@ class GestureClient:
         self._sio.on("error", lambda d: print(f"[GestureClient] SERVER ERROR: {d}"))
         if on_comment is not None:
             self._sio.on("comment_received", self._on_comment_received)
+        if on_recording_start is not None:
+            self._sio.on("recording_start", self._on_recording_start_event)
+        if on_streamer_authenticated is not None:
+            self._sio.on("streamer_authenticated", self._on_streamer_authenticated_event)
+
+    def set_api_key(self, api_key: str | None) -> None:
+        """Swap the bearer token. Takes effect on the next reconnect.
+
+        The python-socketio client doesn't support changing handshake
+        headers mid-connection, so we just store the new key and rely on
+        the next reconnect (or the streamer not caring that gesture_ack
+        events for the next 30s might still be unauthenticated, since
+        the per-user gesture handlers run REST-side via ApiClient).
+        """
+        self._api_key = api_key
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -79,7 +106,7 @@ class GestureClient:
             print("[GestureClient] join_room: not connected")
             return False
         try:
-            self._sio.emit("join_room", {"stream_id": stream_id})
+            self._sio.emit("join_room", {"stream_id": stream_id, "kind": "broadcaster"})
             return True
         except Exception as e:
             print(f"[GestureClient] join_room error: {e}")
@@ -186,3 +213,35 @@ class GestureClient:
                 self._on_comment(username, content)
         except Exception as e:
             print(f"[GestureClient] comment handler error: {e}")
+
+    def _on_recording_start_event(self, data):
+        """Fires when the streamer dashboard clicks Record.
+
+        Runs on the socket.io thread. We just hand the name to the loop's
+        registered callback — the loop is responsible for thread-safety.
+        """
+        if not callable(self._on_recording_start):
+            return
+        try:
+            name = (data or {}).get("name", "").strip()
+            if name:
+                self._on_recording_start(name)
+        except Exception as e:
+            print(f"[GestureClient] recording_start handler error: {e}")
+
+    def _on_streamer_authenticated_event(self, data):
+        """Fires when the dashboard signs in or switches accounts.
+
+        Runs on the socket.io thread; the registered callback hands off
+        to the loop's main thread to refetch overrides/templates safely.
+        """
+        if not callable(self._on_streamer_authenticated):
+            return
+        try:
+            api_key = (data or {}).get("api_key", "")
+            user_id = (data or {}).get("user_id", "")
+            username = (data or {}).get("username", "")
+            if api_key:
+                self._on_streamer_authenticated(api_key, user_id, username)
+        except Exception as e:
+            print(f"[GestureClient] streamer_authenticated handler error: {e}")

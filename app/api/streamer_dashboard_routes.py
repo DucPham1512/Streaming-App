@@ -107,18 +107,76 @@ _PAGE = r"""<!doctype html>
   .act.leave {{ color: #fca5a5; }}
 
   .empty {{ color: var(--muted); padding: 16px; text-align: center; font-style: italic; }}
+
+  /* Auth modal */
+  .auth-modal-bg {{ position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+    display: none; align-items: center; justify-content: center; padding: 24px; z-index: 50; }}
+  .auth-modal-bg.show {{ display: flex; }}
+  .auth-modal {{ background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; width: 100%; max-width: 380px; }}
+  .auth-modal h3 {{ margin: 0 0 6px; font-size: 16px; }}
+  .auth-sub {{ color: var(--muted); font-size: 12px; margin: 0 0 16px; }}
+  .tabs {{ display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }}
+  .tab {{ background: none; border: 0; color: var(--muted); padding: 8px 14px;
+    cursor: pointer; font: inherit; font-size: 13px; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; }}
+  .tab.active {{ color: var(--fg); border-bottom-color: var(--accent); }}
+  .auth-form {{ display: flex; flex-direction: column; gap: 10px; }}
+  .auth-form input {{ background: #0b0d12; color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; font: inherit; }}
+  .auth-form button {{ background: var(--accent); color: #fff; border: 0;
+    border-radius: 6px; padding: 10px; font: inherit; font-weight: 600; cursor: pointer;
+    margin-top: 4px; }}
+  .auth-form button:hover {{ filter: brightness(1.1); }}
+  .auth-err {{ color: #ffb3b3; font-size: 12px; min-height: 16px; margin: 10px 0 0; }}
+  .auth-skip {{ width: 100%; background: none; border: 0; color: var(--muted);
+    padding: 10px; margin-top: 8px; cursor: pointer; font: inherit; font-size: 12px;
+    text-decoration: underline; }}
 </style>
 </head>
 <body>
 <header>
   <h1>Streamer</h1>
   <span class="stream-id">{stream_id}</span>
+  <a href="/streamer/{stream_id}/gestures" target="_blank" rel="noopener"
+     style="margin-left:14px;color:var(--muted);font-size:12px;text-decoration:none">
+    Manage gestures ↗
+  </a>
+  <span id="who" style="margin-left:14px;color:var(--good);font-size:12px;display:none">
+    Signed in as <b id="who-name"></b>
+    <button id="logout-btn" style="margin-left:8px;background:none;border:0;color:var(--muted);
+      cursor:pointer;font:inherit;font-size:12px;text-decoration:underline">sign out</button>
+  </span>
   <span class="status">
     <span id="lk-dot" class="dot"></span><span id="lk-status">video: connecting…</span>
     <span style="width:12px"></span>
     <span id="io-dot" class="dot"></span><span id="io-status">chat: connecting…</span>
   </span>
 </header>
+
+<div id="auth-modal" class="auth-modal-bg">
+  <div class="auth-modal">
+    <h3>Streamer sign-in</h3>
+    <p class="auth-sub">Sign in to load your custom gestures into the broadcaster. New here? Sign up to create an account.</p>
+    <div class="tabs">
+      <button id="tab-login" class="tab active">Log in</button>
+      <button id="tab-signup" class="tab">Sign up</button>
+    </div>
+    <form id="login-form" class="auth-form">
+      <input id="login-id" type="text" placeholder="username or email" autocomplete="username" required>
+      <input id="login-pw" type="password" placeholder="password" autocomplete="current-password" required>
+      <button type="submit">Log in</button>
+    </form>
+    <form id="signup-form" class="auth-form" style="display:none">
+      <input id="signup-user" type="text" placeholder="username (3–64 chars)" autocomplete="username" required>
+      <input id="signup-email" type="email" placeholder="email" autocomplete="email" required>
+      <input id="signup-pw" type="password" placeholder="password (8+ chars)" autocomplete="new-password" required>
+      <button type="submit">Sign up</button>
+    </form>
+    <div id="auth-err" class="auth-err"></div>
+    <button id="auth-skip" class="auth-skip">Skip — use defaults</button>
+  </div>
+</div>
 
 <main>
   <section class="video-wrap">
@@ -267,7 +325,7 @@ _PAGE = r"""<!doctype html>
   socket.on("connect", () => {{
     ioStatus.textContent = "chat: connected";
     ioDot.classList.add("on");
-    socket.emit("join_room", {{ stream_id: STREAM_ID }});
+    socket.emit("join_room", {{ stream_id: STREAM_ID, kind: "dashboard" }});
   }});
   socket.on("disconnect", () => {{
     ioStatus.textContent = "chat: disconnected";
@@ -304,6 +362,135 @@ _PAGE = r"""<!doctype html>
       data.comments.slice().reverse().forEach(addComment);
     }})
     .catch(() => {{}});
+
+  // ---- Streamer auth (login/signup modal) ------------------------------
+  // The api_key is stored in localStorage; on login we also propagate it
+  // to the broadcaster via the socket so it can refetch the user's gesture
+  // customization without a restart.
+  const STORAGE_KEY = "streamer_api_key";
+  const STORAGE_USER = "streamer_username";
+
+  const authModal = $("auth-modal");
+  const tabLogin = $("tab-login"), tabSignup = $("tab-signup");
+  const loginForm = $("login-form"), signupForm = $("signup-form");
+  const authErr = $("auth-err");
+  const whoBox = $("who"), whoName = $("who-name");
+
+  function showAuthModal() {{ authModal.classList.add("show"); authErr.textContent = ""; }}
+  function hideAuthModal() {{ authModal.classList.remove("show"); }}
+
+  function showSignedIn(username) {{
+    whoName.textContent = username;
+    whoBox.style.display = "";
+  }}
+  function showSignedOut() {{
+    whoBox.style.display = "none";
+  }}
+
+  function propagateLogin(apiKey, user) {{
+    localStorage.setItem(STORAGE_KEY, apiKey);
+    localStorage.setItem(STORAGE_USER, user.username);
+    showSignedIn(user.username);
+    hideAuthModal();
+    // Tell the broadcaster (re-broadcasts to the room via the backend).
+    socket.emit("streamer_authenticated", {{
+      stream_id: STREAM_ID,
+      api_key: apiKey,
+    }});
+  }}
+
+  tabLogin.onclick = () => {{
+    tabLogin.classList.add("active"); tabSignup.classList.remove("active");
+    loginForm.style.display = ""; signupForm.style.display = "none"; authErr.textContent = "";
+  }};
+  tabSignup.onclick = () => {{
+    tabSignup.classList.add("active"); tabLogin.classList.remove("active");
+    signupForm.style.display = ""; loginForm.style.display = "none"; authErr.textContent = "";
+  }};
+
+  loginForm.onsubmit = async (e) => {{
+    e.preventDefault();
+    authErr.textContent = "";
+    try {{
+      const r = await fetch("/api/v1/auth/login", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{
+          login: $("login-id").value.trim(),
+          password: $("login-pw").value,
+        }}),
+      }});
+      const body = await r.json().catch(() => ({{}}));
+      if (!r.ok) throw new Error(body.error || body.message || `Login failed (${{r.status}})`);
+      propagateLogin(body.api_key, body.user);
+    }} catch (err) {{
+      authErr.textContent = err.message || "Login failed";
+    }}
+  }};
+
+  signupForm.onsubmit = async (e) => {{
+    e.preventDefault();
+    authErr.textContent = "";
+    try {{
+      const r = await fetch("/api/v1/auth/register", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{
+          username: $("signup-user").value.trim(),
+          email: $("signup-email").value.trim(),
+          password: $("signup-pw").value,
+        }}),
+      }});
+      const body = await r.json().catch(() => ({{}}));
+      if (!r.ok) throw new Error(body.error || body.message || `Sign-up failed (${{r.status}})`);
+      propagateLogin(body.api_key, body.user);
+    }} catch (err) {{
+      authErr.textContent = err.message || "Sign-up failed";
+    }}
+  }};
+
+  $("auth-skip").onclick = hideAuthModal;
+  $("logout-btn").onclick = () => {{
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_USER);
+    showSignedOut();
+    showAuthModal();
+    // We don't bother telling the broadcaster — it just keeps using
+    // whatever identity was last applied. Next sign-in propagates.
+  }};
+
+  socket.on("streamer_auth_ack", (data) => {{
+    addActivity("join", `<b>${{escape(data.username || "you")}}</b> identity applied to broadcaster`);
+  }});
+
+  // Cross-tab: when the gestures page mutates a mapping it bumps
+  // `streamer_gestures_changed_at` in localStorage. Re-propagate the
+  // auth event so the broadcaster refetches and the new mapping takes
+  // effect without the streamer having to switch tabs.
+  window.addEventListener("storage", (e) => {{
+    if (e.key !== "streamer_gestures_changed_at") return;
+    const key = localStorage.getItem(STORAGE_KEY);
+    if (!key) return;
+    socket.emit("streamer_authenticated", {{
+      stream_id: STREAM_ID, api_key: key,
+    }});
+  }});
+
+  // On first load, if we already have a saved key, restore the signed-in
+  // state and re-propagate (broadcaster may have just been restarted).
+  // socket.on("connect") above will join_room first; then we propagate.
+  socket.on("connect", () => {{
+    const savedKey = localStorage.getItem(STORAGE_KEY);
+    const savedUser = localStorage.getItem(STORAGE_USER);
+    if (savedKey) {{
+      showSignedIn(savedUser || "you");
+      socket.emit("streamer_authenticated", {{
+        stream_id: STREAM_ID, api_key: savedKey,
+      }});
+    }} else {{
+      showAuthModal();
+    }}
+  }});
 </script>
 </body>
 </html>

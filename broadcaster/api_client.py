@@ -35,6 +35,14 @@ class ApiClient:
         self._base = api_base.rstrip("/")
         self._api_key = api_key
 
+    def set_api_key(self, api_key: str | None) -> None:
+        """Swap the bearer token used for subsequent requests."""
+        self._api_key = api_key
+
+    @property
+    def api_key(self) -> str | None:
+        return self._api_key
+
     # ------------------------------------------------------------------
     # Verb helpers
     # ------------------------------------------------------------------

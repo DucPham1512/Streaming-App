@@ -248,7 +248,49 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 3. Comment buffer, Socket.IO client, LiveKit publisher ----
     comments = CommentBuffer(capacity=8, ttl_seconds=10.0)
-    client = GestureClient(socket_url, api_key, on_comment=comments.add)
+    # The loop is constructed below — late-bind the dashboard-driven
+    # callbacks via a holder dict so the GestureClient and BroadcastLoop
+    # don't have a circular construction dependency. The ApiClient is also
+    # late-bound (we build it before the loop so the auth callback can
+    # mutate its key).
+    loop_holder: dict = {}
+    api_holder: dict = {}
+
+    def _on_recording_start(name: str) -> None:
+        loop = loop_holder.get("loop")
+        if loop is not None:
+            loop.request_recording(name)
+        else:
+            log.warning("recording_start arrived before loop was constructed; dropping %r", name)
+
+    def _on_streamer_authenticated(new_key: str, user_id: str, username: str) -> None:
+        loop = loop_holder.get("loop")
+        api = api_holder.get("api")
+        if loop is None or api is None:
+            log.warning("streamer_authenticated arrived before loop was constructed; dropping")
+            return
+        # Swap the bearer token used by both clients.
+        api.set_api_key(new_key)
+        client.set_api_key(new_key)
+        # Refetch the user's gesture customization with the new key.
+        try:
+            new_builtins = fetch_builtins(api_base, new_key)
+            new_templates = fetch_templates(api_base, new_key)
+        except Exception as e:
+            log.error("Refetch after streamer login failed: %s", e)
+            return
+        loop.apply_user_identity(
+            builtin_actions=new_builtins,
+            templates=new_templates,
+            username=username or user_id,
+        )
+
+    client = GestureClient(
+        socket_url, api_key,
+        on_comment=comments.add,
+        on_recording_start=_on_recording_start,
+        on_streamer_authenticated=_on_streamer_authenticated,
+    )
     publisher = LiveKitPublisher(
         livekit_url,
         publisher_token,
@@ -280,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- 4. Run the capture/composite/publish loop ----
     api = ApiClient(api_base, api_key)
+    api_holder["api"] = api  # let the streamer_authenticated callback swap its key
     loop = BroadcastLoop(
         stream_id=stream_id,
         publisher=publisher,
@@ -293,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         classifier=classifier,
         api_client=api,
     )
+    loop_holder["loop"] = loop  # let the recording_start callback find it
     result = loop.run()
     log.info(
         "Loop exited (%s); %d frames published",

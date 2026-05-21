@@ -56,18 +56,36 @@ def handle_disconnect():
     clear_sid(sid)
 
 
+_VIEWER_KIND = "viewer"
+_NONVIEWER_KINDS = frozenset({"dashboard", "gestures", "broadcaster"})
+
+
 @socketio.on("join_room")
 def handle_join_room(data):
     """Client requests to join a specific stream room.
 
     Expected payload:
-        {"stream_id": "<uuid>"}
+        {"stream_id": "<uuid>", "kind": "viewer" | "dashboard" | "gestures" | "broadcaster"}
+
+    `kind` defaults to "viewer" for backwards compatibility. Only viewer
+    joins trigger `viewer_joined`/`viewer_left` broadcasts and count toward
+    `stream_manager`'s client set — the dashboard, gestures page, and the
+    broadcaster all need room membership (to receive room-scoped events)
+    but shouldn't show up as viewers.
     """
     sid = flask_request.sid
-    stream_id = data.get("stream_id") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        emit("error", {"message": "Invalid payload"})
+        return
+
+    stream_id = data.get("stream_id")
+    kind = (data.get("kind") or _VIEWER_KIND).strip().lower()
 
     if not stream_id:
         emit("error", {"message": "stream_id is required"})
+        return
+    if kind != _VIEWER_KIND and kind not in _NONVIEWER_KINDS:
+        emit("error", {"message": f"unknown kind {kind!r}"})
         return
 
     # Allow joining any stream that exists in the DB; active-only enforcement
@@ -79,11 +97,13 @@ def handle_join_room(data):
             return
 
     join_room(stream_id)
-    stream_manager.add_client(stream_id, sid)
-
-    logger.info("Client %s joined room %s", sid, stream_id)
-    emit("room_joined", {"stream_id": stream_id, "sid": sid})
-    emit("viewer_joined", {"sid": sid}, to=stream_id, include_self=False)
+    if kind == _VIEWER_KIND:
+        stream_manager.add_client(stream_id, sid)
+        logger.info("Viewer %s joined room %s", sid, stream_id)
+        emit("viewer_joined", {"sid": sid}, to=stream_id, include_self=False)
+    else:
+        logger.info("Non-viewer (%s) %s joined room %s", kind, sid, stream_id)
+    emit("room_joined", {"stream_id": stream_id, "sid": sid, "kind": kind})
 
 
 @socketio.on("leave_room")
@@ -101,8 +121,9 @@ def handle_leave_room(data):
         return
 
     leave_room(stream_id)
-    stream_manager.remove_client(stream_id, sid)
+    was_viewer = stream_manager.remove_client(stream_id, sid)
 
-    logger.info("Client %s left room %s", sid, stream_id)
+    logger.info("Client %s left room %s (was_viewer=%s)", sid, stream_id, was_viewer)
     emit("room_left", {"stream_id": stream_id, "sid": sid})
-    emit("viewer_left", {"sid": sid}, to=stream_id, include_self=False)
+    if was_viewer:
+        emit("viewer_left", {"sid": sid}, to=stream_id, include_self=False)
