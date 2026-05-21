@@ -190,6 +190,10 @@ def main(argv: list[str] | None = None) -> int:
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
+    parser.add_argument(
+        "--no-dashboard", action="store_true",
+        help="don't auto-open the streamer dashboard in a browser",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -216,6 +220,17 @@ def main(argv: list[str] | None = None) -> int:
     livekit_url = resp["livekit_url"]
     log.info("Stream created: id=%s", stream_id)
     log.info("LiveKit URL: %s", livekit_url)
+    dashboard_url = f"{api_base.rstrip('/')}/streamer/{stream_id}"
+    log.info("Streamer dashboard: %s", dashboard_url)
+    if not args.no_dashboard:
+        import webbrowser
+        # new=2 asks for a new tab if a browser window is already open.
+        # Silently best-effort: if no browser is available (e.g. headless),
+        # the streamer can still copy the URL from the log line above.
+        try:
+            webbrowser.open(dashboard_url, new=2)
+        except Exception as e:
+            log.debug("webbrowser.open failed: %s", e)
 
     # ---- 2. Fetch per-user gesture customization (best-effort) ----
     # builtin_actions: { built-in gesture name -> effective action }.

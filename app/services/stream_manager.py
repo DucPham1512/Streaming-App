@@ -167,9 +167,14 @@ class StreamManager:
         return False
 
     def remove_client(self, stream_id, sid):
+        """Remove sid from the stream's client set. Returns True if it was present."""
         with self._lock:
             if stream_id in self._active_streams:
-                self._active_streams[stream_id]["connected_clients"].discard(sid)
+                clients = self._active_streams[stream_id]["connected_clients"]
+                if sid in clients:
+                    clients.discard(sid)
+                    return True
+        return False
 
     def get_active_stream_ids(self):
         with self._lock:

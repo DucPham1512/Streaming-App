@@ -25,7 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def _get_user_from_sid() -> User | None:
-    """Resolve the authenticated user from the socket handshake Authorization header."""
+    """Resolve the authenticated user for the current socket.
+
+    Two paths:
+    1. The handshake `auth` payload (preferred — works for all transports
+       including browser websocket). Stashed per-sid at connect time.
+    2. Legacy Authorization header (for clients that still send it; only
+       reaches us on polling transport in browsers).
+    """
+    from app.sockets.session import get_user_for_sid
+    user = get_user_for_sid(flask_request.sid)
+    if user is not None:
+        return user
     auth_header = flask_request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None

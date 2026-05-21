@@ -14,22 +14,46 @@ logger = logging.getLogger(__name__)
 
 
 @socketio.on("connect")
-def handle_connect():
-    """Client connected to the WebSocket server."""
+def handle_connect(auth=None):
+    """Client connected to the WebSocket server.
+
+    `auth` is the dict passed by socket.io-client's `auth` option (preferred
+    over `extraHeaders`, which the browser silently ignores on websocket
+    transport). We stash the api_key per-sid so later events can resolve the
+    user without parsing handshake state again.
+    """
     sid = flask_request.sid
-    logger.info("Client connected: %s", sid)
+    api_key = None
+    if isinstance(auth, dict):
+        token = auth.get("token") or auth.get("api_key")
+        if isinstance(token, str) and token.strip():
+            api_key = token.strip()
+    if api_key:
+        from app.sockets.session import set_sid_api_key
+        set_sid_api_key(sid, api_key)
+    logger.info("Client connected: %s (authed=%s)", sid, bool(api_key))
     emit("connection_ack", {"status": "connected", "sid": sid})
 
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    """Client disconnected — clean up from any rooms."""
+    """Client disconnected — clean up from any rooms and tell the room.
+
+    Browsers and mobile apps don't reliably fire `leave_room` when their tab
+    or app closes — the WebSocket just drops. Without broadcasting on
+    disconnect, dashboards' viewer counts only ever decrement on graceful
+    leaves, so they drift upward over time.
+    """
     sid = flask_request.sid
     logger.info("Client disconnected: %s", sid)
 
-    # Remove client from all active streams they were in
     for stream_id in stream_manager.get_active_stream_ids():
-        stream_manager.remove_client(stream_id, sid)
+        was_member = stream_manager.remove_client(stream_id, sid)
+        if was_member:
+            socketio.emit("viewer_left", {"sid": sid}, to=stream_id)
+
+    from app.sockets.session import clear_sid
+    clear_sid(sid)
 
 
 @socketio.on("join_room")
