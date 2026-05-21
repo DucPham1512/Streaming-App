@@ -43,10 +43,15 @@ services:
     environment:
       # Format: "<key>: <secret>" (note the colon-space separator).
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set, 32+ chars}"
-    ports:
-      - "7880:7880"         # signaling (WebSocket)
-      - "7881:7881"         # TCP fallback for ICE
-      - "50000-60000:50000-60000/udp"   # WebRTC media
+    # Host networking is REQUIRED for self-hosted LiveKit. WebRTC uses a
+    # range of UDP ports (50000-60000) for media; trying to publish each
+    # port mapping on a Docker bridge network creates 10,000 iptables
+    # rules and can take many minutes (or hang) on Linux with nftables.
+    # network_mode: host bypasses this entirely — LiveKit binds the
+    # ports directly on the host. Also matches LiveKit's official
+    # self-host guidance. Reachable on the laptop at ws://localhost:7880
+    # and from phones at ws://<laptop-LAN-IP>:7880.
+    network_mode: host
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
@@ -65,7 +70,13 @@ services:
       # Docker-internal hostnames override .env values which target host-mode dev.
       DATABASE_URL: postgresql://${POSTGRES_USER:-streaming}:${POSTGRES_PASSWORD:-streaming}@postgres:5432/${POSTGRES_DB:-streaming_app}
       MINIO_ENDPOINT: minio:9000
-      LIVEKIT_URL_INTERNAL: ws://livekit:7880
+      # LiveKit runs in network_mode: host, so it is NOT reachable by the
+      # "livekit" service name from the compose bridge network. From inside
+      # this container, the host is reachable via host.docker.internal, which
+      # we map to the docker bridge gateway below.
+      LIVEKIT_URL_INTERNAL: ws://host.docker.internal:7880
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "5001:5001"
 

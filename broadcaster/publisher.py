@@ -224,7 +224,8 @@ class LiveKitPublisher:
         try:
             self._room = rtc.Room()
             await self._room.connect(self._url, self._token)
-            log.info("LiveKit room connected (sid=%s)", self._room.sid)
+            sid = await self._room.sid
+            log.info("LiveKit room connected (sid=%s)", sid)
 
             # --- Video track ---
             self._source = rtc.VideoSource(self._width, self._height)

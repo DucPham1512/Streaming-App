@@ -167,6 +167,14 @@ class BroadcastLoop:
                 w, h, self._width, self._height,
             )
 
+        if self._show_preview:
+            # Resizable preview window sized to the negotiated camera
+            # resolution. Without WINDOW_NORMAL the window auto-sizes to
+            # something the window manager chooses, which on some Linux
+            # desktops comes out tiny.
+            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(WINDOW_NAME, w, h)
+
         effects = _EffectManager(w, h)
         muted = False
         fist_hold_frames = 0

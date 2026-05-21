@@ -30,6 +30,7 @@ python-socketio==5.12.1
 simple-websocket==1.1.0
 six==1.17.0
 SQLAlchemy==2.0.40
+psycopg2-binary==2.9.9
 typing_extensions==4.15.0
 urllib3==2.6.3
 Werkzeug==3.1.8

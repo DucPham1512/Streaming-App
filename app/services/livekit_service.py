@@ -19,9 +19,7 @@ from typing import Any, Optional
 from livekit import api as lk_api
 
 
-# ---- Module-level SDK config (lazy) ----
-
-_room_client: Optional[lk_api.LiveKitAPI] = None
+# ---- Module-level SDK config ----
 
 
 def _api_key() -> str:
@@ -46,22 +44,28 @@ def _public_url() -> str:
     return os.environ["LIVEKIT_URL"]
 
 
-def _get_room_client() -> lk_api.LiveKitAPI:
-    """Lazy init so tests can patch env vars before first call."""
-    global _room_client
-    if _room_client is None:
-        _room_client = lk_api.LiveKitAPI(_server_url(), _api_key(), _api_secret())
-    return _room_client
+def _run_with_client(op):
+    """Run a LiveKit admin operation under a fresh event loop and client.
 
+    The LiveKit Python SDK uses aiohttp, which binds its ClientSession to the
+    event loop that's running at construction time. Since Flask's sync dev
+    server has no ambient loop, we must (1) start a new loop with
+    asyncio.run(), and (2) construct the LiveKitAPI client *inside* that
+    loop so its session is bound to the loop that will await it. Then we
+    `aclose()` the client at the end of the same loop to avoid leaking
+    sessions across calls.
 
-def _run_sync(coro):
-    """Run an async coroutine from sync code.
-
-    Flask's dev server (Werkzeug) doesn't run inside an event loop, so we
-    can use asyncio.run() per call. Creates a new loop each invocation
-    (acceptable for low-frequency room-admin operations).
+    `op` is a callable taking the LiveKitAPI client and returning a coroutine.
     """
-    return asyncio.run(coro)
+
+    async def _runner():
+        client = lk_api.LiveKitAPI(_server_url(), _api_key(), _api_secret())
+        try:
+            return await op(client)
+        finally:
+            await client.aclose()
+
+    return asyncio.run(_runner())
 
 
 # ---- Domain DTOs (decoupled from SDK types) ----
@@ -146,8 +150,8 @@ def create_stream_room(
     :raises LiveKitServiceError: if the LiveKit API call fails (not 409/conflict).
     """
     try:
-        _run_sync(
-            _get_room_client().room.create_room(
+        _run_with_client(
+            lambda c: c.room.create_room(
                 lk_api.CreateRoomRequest(
                     name=stream_id,
                     empty_timeout=empty_timeout_seconds,
@@ -183,8 +187,8 @@ def delete_stream_room(stream_id: str) -> None:
     Idempotent: deleting a nonexistent room is treated as success.
     """
     try:
-        _run_sync(
-            _get_room_client().room.delete_room(
+        _run_with_client(
+            lambda c: c.room.delete_room(
                 lk_api.DeleteRoomRequest(room=stream_id)
             )
         )

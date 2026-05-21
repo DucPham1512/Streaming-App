@@ -16,8 +16,11 @@ rtc:
 webhook:
   # api_key here must match a key in LIVEKIT_KEYS so signatures verify.
   api_key: devkey
+  # LiveKit runs with network_mode: host (see docker-compose.yml), so
+  # `backend` is not in its DNS — it reaches the backend container
+  # through the host-published port instead.
   urls:
-    - http://backend:5001/api/v1/webhooks/livekit
+    - http://localhost:5001/api/v1/webhooks/livekit
 
 logging:
   level: info

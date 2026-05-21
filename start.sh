@@ -16,6 +16,26 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+# Host-level libs the broadcaster needs (sounddevice / OpenCV). These can't go
+# in requirements.txt — they're apt packages, not PyPI ones. See
+# broadcaster/BROADCASTER.md.
+if command -v ldconfig >/dev/null 2>&1; then
+  # Cache ldconfig output in a variable to avoid an `ldconfig | grep -q`
+  # pipeline: under `set -o pipefail`, grep -q exits early on first match,
+  # closes the pipe, and ldconfig dies with SIGPIPE → the whole pipeline is
+  # reported as failed, incorrectly flagging the lib as missing.
+  ldconfig_out="$(ldconfig -p)"
+  missing=()
+  grep -q "libportaudio\.so" <<<"$ldconfig_out" || missing+=("libportaudio2")
+  grep -q "libGL\.so"        <<<"$ldconfig_out" || missing+=("libgl1")
+  grep -q "libglib-2\.0\.so" <<<"$ldconfig_out" || missing+=("libglib2.0-0")
+  if (( ${#missing[@]} > 0 )); then
+    echo "Missing host libraries: ${missing[*]}"
+    echo "Install with: sudo apt install -y ${missing[*]}"
+    exit 1
+  fi
+fi
+
 # ------------------------------------------------------------------
 # 1. Backend stack via docker compose
 # ------------------------------------------------------------------
