@@ -89,7 +89,7 @@ def handle_join_room(data):
         return
 
     # Allow joining any stream that exists in the DB; active-only enforcement
-    # would block dev/demo streams that haven't received a Mux webhook yet.
+    # would block dev/demo streams that haven't transitioned to active yet.
     if not stream_manager.is_active(stream_id):
         from app.models.stream import Stream
         if not db.session.get(Stream, stream_id):

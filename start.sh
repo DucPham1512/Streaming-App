@@ -67,4 +67,4 @@ if [[ -f broadcaster/.env ]]; then
 fi
 
 echo "Starting broadcaster (camera + mic + LiveKit publisher)…"
-exec python -m broadcaster --no-preview "$@"
+exec python -m broadcaster "$@"

@@ -44,7 +44,7 @@ _VALID_ACTIONS = frozenset([
 ])
 _VALID_TEMPLATE_ACTIONS = _VALID_ACTIONS | frozenset({"unmapped"})
 
-# Curated picker list shown in the FE Gesture Library screen. The order
+# Curated picker list shown on the streamer gestures page. The order
 # here is also the order the picker presents to users — frequently-used
 # entertainment effects first, destructive actions last.
 ACTION_PICKER = [

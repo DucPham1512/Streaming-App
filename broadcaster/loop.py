@@ -266,19 +266,24 @@ class BroadcastLoop:
                             "Custom gesture '%s' → action '%s'",
                             custom.name, custom.action,
                         )
+                        # Custom gestures have no per-gesture anchor (only
+                        # built-ins do — see detector.anchor_for). Fall back
+                        # to landmark 9 (middle-finger MCP, i.e. palm
+                        # center) so the viewer's effect still renders at
+                        # the streamer's hand instead of the default
+                        # screen-center position.
+                        custom_anchor = (hand_lm[9].x, hand_lm[9].y)
                         sent = self._client.send_gesture(
                             custom.action, self._stream_id,
-                            anchor=anchor_norm, secondary=secondary_norm,
+                            anchor=custom_anchor, secondary=None,
                         )
                         if sent:
                             local_fx = COMMAND_LOCAL_EFFECT.get(custom.action)
                             if local_fx:
-                                origin_px = None
-                                if anchor_norm is not None:
-                                    origin_px = (
-                                        int(anchor_norm[0] * w),
-                                        int(anchor_norm[1] * h),
-                                    )
+                                origin_px = (
+                                    int(custom_anchor[0] * w),
+                                    int(custom_anchor[1] * h),
+                                )
                                 effects.trigger(local_fx, origin=origin_px)
                             if custom.action == "mute_toggle":
                                 muted = not muted
@@ -476,7 +481,7 @@ class BroadcastLoop:
             tpl = resp.get("template", {})
             log.info(
                 "Saved template '%s' (id=%s) with %d samples. "
-                "Assign an action via the FE Gesture Library.",
+                "Assign an action on the streamer gestures page.",
                 session.name, tpl.get("id"), len(session.samples),
             )
         except ApiError as e:

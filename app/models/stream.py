@@ -23,7 +23,7 @@ class Stream(db.Model):
         db.String(20), nullable=False, default="public"
     )  # public / private / unlisted
 
-    # Status now mirrors Mux lifecycle states:
+    # Lifecycle states:
     #   idle         — created, never broadcast
     #   active       — currently broadcasting
     #   disconnected — temporarily lost (don't end yet, may reconnect)
@@ -35,17 +35,10 @@ class Stream(db.Model):
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
-    started_at = db.Column(db.DateTime, nullable=True)  # set when Mux fires 'active'
+    started_at = db.Column(db.DateTime, nullable=True)
     ended_at = db.Column(db.DateTime, nullable=True)
 
-    def to_dict(self, include_secrets: bool = False):
-        """Serialize the stream for API responses.
-
-        :param include_secrets: kept for source compatibility; no per-stream
-                                secrets live on the model anymore. Publisher
-                                tokens are minted per-request by the route
-                                layer (see app/services/livekit_service.py).
-        """
+    def to_dict(self):
         return {
             "id": self.id,
             "title": self.title,
