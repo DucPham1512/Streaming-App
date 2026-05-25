@@ -25,10 +25,10 @@ class Config:
     RATELIMIT_DEFAULT = os.environ.get("RATELIMIT_DEFAULT", "1000 per hour")
     RATELIMIT_STRATEGY = "fixed-window"
     RATELIMIT_HEADERS_ENABLED = True
-    # Mux credentials
-    MUX_TOKEN_ID = os.environ.get("MUX_TOKEN_ID")
-    MUX_TOKEN_SECRET = os.environ.get("MUX_TOKEN_SECRET")
-    MUX_WEBHOOK_SECRET = os.environ.get("MUX_WEBHOOK_SECRET")  # optional in dev
+    # LiveKit credentials — see docs/decisions/001-livekit-over-mux.md.
+    LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY")
+    LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET")
+    LIVEKIT_URL = os.environ.get("LIVEKIT_URL")
 
     # --- MinIO / S3-compatible object storage ---
     MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")

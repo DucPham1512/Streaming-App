@@ -75,14 +75,14 @@ _COMMAND_EFFECTS: dict[str, str] = {
 
 _VALID_COMMANDS = frozenset(_COMMAND_EFFECTS.keys())
 
-# Approximate Mux HLS playback delay. Effects are buffered server-side for
-# this many seconds so viewers see the visual effect at the same moment
-# their video shows the streamer performing the gesture.
-# end_stream and mute_toggle are control commands — they fire immediately
-# (we'd rather end the stream early than have it linger after the streamer
-# already walked away).
-EFFECT_BROADCAST_DELAY_SECONDS = 22
-_INSTANT_COMMANDS = frozenset({"end_stream", "mute_toggle"})
+# Control commands DO need to reach viewers (end the stream, change mute state).
+# Visual-entertainment commands (heart/confetti/fireworks/like) are intentionally
+# NOT broadcast to viewers anymore — the broadcaster composites these effects
+# into the published video frame before publishing to LiveKit (decision-002:
+# burn-in compositing), so viewers see them as part of the stream rather than
+# rendering overlays from a separate event. The old 22-second buffer that
+# delayed effect events to align with Mux HLS latency is gone with Mux.
+_CONTROL_COMMANDS = frozenset({"end_stream", "mute_toggle"})
 
 
 def _clean_anchor(raw) -> dict | None:
@@ -152,15 +152,11 @@ def handle_gesture_command(data):
     if secondary is not None:
         payload["secondary"] = secondary
 
-    if command in _INSTANT_COMMANDS:
+    if command in _CONTROL_COMMANDS:
         emit("stream_state_update", payload, to=stream_id)
-    else:
-        # Buffer entertainment effects so they line up with the delayed HLS video
-        def _delayed_broadcast():
-            socketio.sleep(EFFECT_BROADCAST_DELAY_SECONDS)
-            socketio.emit("stream_state_update", payload, to=stream_id)
-
-        socketio.start_background_task(_delayed_broadcast)
+    # else: entertainment commands no longer fan out — see comment on
+    # _CONTROL_COMMANDS above. The broadcaster has already burned the
+    # visual into the published frame by the time viewers see anything.
 
     # Debug: how many sockets are currently in this room?
     room_members = socketio.server.manager.rooms.get("/", {}).get(stream_id, {})

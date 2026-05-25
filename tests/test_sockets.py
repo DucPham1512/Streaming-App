@@ -68,10 +68,13 @@ class TestMediaEvents:
 
     def test_gesture_command_success(self, client, socketio_test_client):
         """gesture_command_received with valid stream broadcasts update."""
+        from app.services.stream_manager import stream_manager
         create_resp = client.post(
             "/api/v1/streams", content_type="application/json"
         )
         stream_id = create_resp.get_json()["stream"]["id"]
+        # Flip to 'active' as if LiveKit's track_published webhook fired.
+        stream_manager.mark_active(stream_id)
 
         socketio_test_client.get_received()
         socketio_test_client.emit("join_room", {"stream_id": stream_id})
@@ -80,7 +83,7 @@ class TestMediaEvents:
         socketio_test_client.emit(
             "gesture_command_received",
             {
-                "command": "switch_camera",
+                "command": "mute_toggle",  # any value in _COMMAND_EFFECTS
                 "confidence": 0.95,
                 "stream_id": stream_id,
             },
@@ -102,10 +105,13 @@ class TestMediaEvents:
 
     def test_audio_chunk_success(self, client, socketio_test_client):
         """stream_audio_chunk with valid stream processes and emits subtitle."""
+        from app.services.stream_manager import stream_manager
         create_resp = client.post(
             "/api/v1/streams", content_type="application/json"
         )
         stream_id = create_resp.get_json()["stream"]["id"]
+        # Flip to 'active' as if LiveKit's track_published webhook fired.
+        stream_manager.mark_active(stream_id)
 
         socketio_test_client.get_received()
         socketio_test_client.emit("join_room", {"stream_id": stream_id})

@@ -8,8 +8,8 @@ services:
       - "9000:9000"   # S3 API
       - "9001:9001"   # web console
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -19,16 +19,76 @@ services:
       timeout: 5s
       retries: 3
 
-  # Uncomment to mirror production storage in dev:
-  # postgres:
-  #   image: postgres:16
-  #   environment:
-  #     POSTGRES_USER: streaming
-  #     POSTGRES_PASSWORD: streaming
-  #     POSTGRES_DB: streaming_app
-  #   ports: ["5432:5432"]
-  #   volumes: [postgres_data:/var/lib/postgresql/data]
+  postgres:
+    image: postgres:16
+    container_name: streaming-app-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-streaming}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-streaming}
+      POSTGRES_DB: ${POSTGRES_DB:-streaming_app}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-streaming}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: streaming-app-livekit
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # Format: "<key>: <secret>" (note the colon-space separator).
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set, 32+ chars}"
+    # Host networking is REQUIRED for self-hosted LiveKit. WebRTC uses a
+    # range of UDP ports (50000-60000) for media; trying to publish each
+    # port mapping on a Docker bridge network creates 10,000 iptables
+    # rules and can take many minutes (or hang) on Linux with nftables.
+    # network_mode: host bypasses this entirely — LiveKit binds the
+    # ports directly on the host. Also matches LiveKit's official
+    # self-host guidance. Reachable on the laptop at ws://localhost:7880
+    # and from phones at ws://<laptop-LAN-IP>:7880.
+    network_mode: host
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  backend:
+    build: .
+    container_name: streaming-app-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      livekit:
+        condition: service_started
+    env_file: .env
+    environment:
+      # Docker-internal hostnames override .env values which target host-mode dev.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-streaming}:${POSTGRES_PASSWORD:-streaming}@postgres:5432/${POSTGRES_DB:-streaming_app}
+      MINIO_ENDPOINT: minio:9000
+      # LiveKit runs in network_mode: host, so it is NOT reachable by the
+      # "livekit" service name from the compose bridge network. From inside
+      # this container, the host is reachable via host.docker.internal, which
+      # we map to the docker bridge gateway below.
+      LIVEKIT_URL_INTERNAL: ws://host.docker.internal:7880
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "5001:5001"
+
+  # The broadcaster process is NOT a compose service. It needs direct host
+  # access to the camera (/dev/videoN), microphone (PortAudio), and X11 for
+  # cv2.imshow — combining all three through Docker is brittle. It runs on
+  # the host via `python -m broadcaster`. See:
+  #   - docs/decisions/003-python-broadcaster-not-phone.md
+  #   - broadcaster/BROADCASTER.md
+  # `./start.sh` brings up this stack with `docker compose up -d` then execs
+  # `python -m broadcaster` so the user still gets one command.
 
 volumes:
   minio_data:
-  # postgres_data:
+  postgres_data:

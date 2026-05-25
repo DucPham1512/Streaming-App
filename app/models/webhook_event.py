@@ -1,7 +1,8 @@
 """Webhook event audit log — also enforces idempotency.
 
-Mux retries failed webhook deliveries, so we get duplicates. The unique
-constraint on mux_event_id makes processing the same event twice a no-op.
+Webhook providers (LiveKit today; previously Mux) retry failed deliveries,
+so we may receive duplicates. The unique constraint on external_event_id
+makes processing the same event twice a no-op.
 """
 
 from datetime import datetime, timezone
@@ -12,8 +13,8 @@ class WebhookEvent(db.Model):
     __tablename__ = "webhook_events"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    # Mux's event ID. Unique constraint = automatic dedup.
-    mux_event_id = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    # Event ID from the upstream provider (LiveKit). Unique constraint = automatic dedup.
+    external_event_id = db.Column(db.String(64), unique=True, nullable=False, index=True)
     event_type = db.Column(db.String(64), nullable=False)
     # Store the raw payload as text (SQLite has no native JSON type)
     payload = db.Column(db.Text, nullable=False)
