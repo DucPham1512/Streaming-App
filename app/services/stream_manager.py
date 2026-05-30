@@ -99,6 +99,46 @@ class StreamManager:
     # These accept the local Stream.id (= LiveKit room name) — the webhook
     # handler resolves the LiveKit event's `room.name` to that before calling.
 
+    def restart_stream(
+        self,
+        stream_id: str,
+        *,
+        owner_identity: Optional[str] = None,
+    ) -> tuple[Stream, str, str] | tuple[None, None, None]:
+        """Delete and recreate the LiveKit room, reset stream status to idle.
+
+        Works from any status (including 'ended'). Returns
+        (stream, publisher_token, livekit_url) or (None, None, None) if not found.
+
+        Raises livekit_service.LiveKitServiceError if provisioning fails.
+        """
+        stream = db.session.get(Stream, stream_id)
+        if stream is None:
+            return None, None, None
+
+        # Tear down the old room (idempotent if already gone or never existed).
+        try:
+            livekit_service.delete_stream_room(stream.id)
+        except livekit_service.LiveKitServiceError:
+            pass
+
+        identity = owner_identity or f"publisher-{stream.id[:8]}"
+
+        created = livekit_service.create_stream_room(
+            stream_id=stream.id,
+            owner_identity=identity,
+            owner_display_name=None,
+        )
+
+        stream.status = "idle"
+        stream.ended_at = None
+        db.session.commit()
+
+        with self._lock:
+            self._active_streams.pop(stream_id, None)
+
+        return stream, created.publisher_token, created.livekit_url
+
     def mark_connected(self, stream_id: str):
         """Publisher joined the room but hasn't published a track yet."""
         stream = db.session.get(Stream, stream_id)

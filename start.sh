@@ -66,5 +66,15 @@ if [[ -f broadcaster/.env ]]; then
   set +a
 fi
 
+# Kill any leftover broadcaster from a previous run so it doesn't hold the camera.
+pkill -f "python.*broadcaster" 2>/dev/null || true
+sleep 0.5
+
 echo "Starting broadcaster (camera + mic + LiveKit publisher)…"
-exec python -m broadcaster "$@"
+# Prefer the project venv so broadcaster deps are always available without
+# requiring the caller to manually `source .venv/bin/activate` first.
+PYTHON=python
+if [[ -x .venv/bin/python ]]; then
+  PYTHON=.venv/bin/python
+fi
+exec "$PYTHON" -m broadcaster "$@"

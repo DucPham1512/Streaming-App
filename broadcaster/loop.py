@@ -71,7 +71,7 @@ WINDOW_NAME = "VSR Broadcaster — Q quit, M mute, C clear effects"
 @dataclass
 class LoopResult:
     """What the loop returned and why, so __main__.py can decide next steps."""
-    reason: str          # "quit" | "end_stream_gesture" | "camera_error"
+    reason: str          # "quit" | "end_stream_gesture" | "end_stream_remote" | "camera_error"
     frames_published: int
 
 
@@ -154,6 +154,9 @@ class BroadcastLoop:
         # capture loop drains this every frame.
         self._pending_recording_name: Optional[str] = None
         self._pending_lock = threading.Lock()
+        # Set by request_end() (e.g. dashboard "End Stream" button) to break
+        # the capture loop cleanly from another thread.
+        self._stop_event = threading.Event()
 
     def run(self) -> LoopResult:
         cap = cv2.VideoCapture(self._camera_index)
@@ -190,6 +193,11 @@ class BroadcastLoop:
 
         with GestureDetector() as detector:
             while True:
+                # Check for a remote end-stream request (e.g. dashboard button).
+                if self._stop_event.is_set():
+                    reason = "end_stream_remote"
+                    break
+
                 # Pick up any recording request the dashboard fired since the
                 # last frame. Running this on the loop thread keeps RecordingSession
                 # state strictly single-threaded.
@@ -451,6 +459,15 @@ class BroadcastLoop:
             if self._pending_recording_name is None:
                 self._pending_recording_name = name
                 log.info("Recording requested: name=%r", name)
+
+    def request_end(self) -> None:
+        """Signal the capture loop to exit cleanly (e.g. dashboard End Stream).
+
+        Thread-safe; may be called from any thread. The loop will break on its
+        next iteration and return LoopResult(reason='end_stream_remote', ...).
+        """
+        self._stop_event.set()
+        log.info("End-stream requested from outside the loop")
 
     def _drain_recording_request(self) -> None:
         """If a request is pending, kick off the session. Idempotent."""
