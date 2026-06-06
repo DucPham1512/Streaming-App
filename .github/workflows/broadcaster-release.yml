@@ -36,15 +36,18 @@ jobs:
       - name: Build with PyInstaller
         working-directory: broadcaster
         run: pyinstaller broadcaster.spec
-
+        
       - name: Rename artifact
-        run: mv ${{ matrix.dist_path }} broadcaster/dist/${{ matrix.artifact_name }}
+        shell: bash
+        run: |
+          mkdir -p broadcaster/dist/out
+          cp "${{ matrix.dist_path }}" "broadcaster/dist/out/${{ matrix.artifact_name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: broadcaster/dist/${{ matrix.artifact_name }}
+          path: broadcaster/dist/out/${{ matrix.artifact_name }}
 
   release:
     needs: build
