@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 
@@ -6,8 +7,13 @@ a = Analysis(
     ['tray.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['pystray._win32', 'pystray._darwin', 'pystray._xorg'],
+    datas=collect_data_files('livekit.rtc'),
+    hiddenimports=[
+        'livekit.rtc.resources',
+        'pystray._win32',
+        'pystray._darwin',
+        'pystray._xorg',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
