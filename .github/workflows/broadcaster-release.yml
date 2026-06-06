@@ -11,13 +11,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: Broadcaster-Windows.exe
+            artifact_name: Broadcaster-Windows.exe
             dist_path: broadcaster/dist/Broadcaster.exe
           - os: macos-latest
-            artifact: Broadcaster-macOS
+            artifact_name: Broadcaster-macOS
             dist_path: broadcaster/dist/Broadcaster
           - os: ubuntu-latest
-            artifact: Broadcaster-Linux
+            artifact_name: Broadcaster-Linux
             dist_path: broadcaster/dist/Broadcaster
 
     runs-on: ${{ matrix.os }}
@@ -37,11 +37,14 @@ jobs:
         working-directory: broadcaster
         run: pyinstaller broadcaster.spec
 
+      - name: Rename artifact
+        run: mv ${{ matrix.dist_path }} broadcaster/dist/${{ matrix.artifact_name }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.dist_path }}
+          name: ${{ matrix.artifact_name }}
+          path: broadcaster/dist/${{ matrix.artifact_name }}
 
   release:
     needs: build
