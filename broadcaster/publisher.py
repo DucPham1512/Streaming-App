@@ -188,6 +188,39 @@ class LiveKitPublisher:
         self._worker.join(timeout=timeout_seconds)
         self._worker = None
 
+    def restart(
+        self,
+        new_url: str,
+        new_token: str,
+        *,
+        connect_timeout_seconds: float = 10.0,
+    ) -> None:
+        """Disconnect from the current room and reconnect with new credentials.
+
+        Intended to be called from a non-worker thread (e.g. the Socket.IO
+        event thread via a trampoline thread). Blocks until the new connection
+        is ready or raises on timeout/error.
+        """
+        log.info("Publisher restart requested (url=%s)", new_url)
+        self.stop(timeout_seconds=5.0)
+
+        # Update credentials and reset all worker-owned state.
+        self._url = new_url
+        self._token = new_token
+        self._ready = threading.Event()
+        self._error = None
+        self._stop_requested = False
+        self._source = None
+        self._audio_source = None
+        self._mic_stream = None
+        self._room = None
+        self._loop = None
+        self._bgra_buf = None
+        self._worker = None
+
+        self.start(connect_timeout_seconds=connect_timeout_seconds)
+        log.info("Publisher restarted and ready")
+
     @property
     def ready(self) -> bool:
         """True once track is published and frames will be accepted."""

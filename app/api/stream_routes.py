@@ -84,11 +84,46 @@ def update_stream(stream_id):
 @stream_bp.route("/<stream_id>/end", methods=["POST"])
 def end_stream(stream_id):
     """Terminate the stream and mark it as ended."""
+    from app.extensions import socketio
+
     stream = stream_manager.end_stream(stream_id)
     if stream is None:
         return jsonify({"error": "Stream not found or already ended"}), 404
 
+    # Tell the broadcaster (if still running) to stop its capture loop.
+    socketio.emit("stream_ended", {"stream_id": stream_id}, to=stream_id, namespace="/")
+
     return jsonify({"stream": stream.to_dict(), "message": "Stream ended"}), 200
+
+
+@stream_bp.route("/<stream_id>/restart", methods=["POST"])
+def restart_stream(stream_id):
+    """Delete and recreate the LiveKit room, reset stream status to idle.
+
+    Notifies the broadcaster (if still connected) via the socket room so it
+    can reconnect its publisher without a full process restart.
+    """
+    from app.extensions import socketio
+
+    try:
+        stream, publisher_token, livekit_url = stream_manager.restart_stream(stream_id)
+    except livekit_service.LiveKitServiceError as e:
+        return jsonify({"error": "Failed to provision stream", "detail": str(e)}), 502
+
+    if stream is None:
+        return jsonify({"error": "Stream not found"}), 404
+
+    # Notify broadcaster in the socket room. It receives publisher_token to
+    # reconnect LiveKit. Dashboard viewers in the same room receive the event
+    # too but ignore the token (they refetch a viewer token via connectVideo).
+    socketio.emit(
+        "restart_stream",
+        {"stream_id": stream_id, "publisher_token": publisher_token, "livekit_url": livekit_url},
+        to=stream_id,
+        namespace="/",
+    )
+
+    return jsonify({"stream": stream.to_dict(), "message": "Stream room restarted"}), 200
 
 
 @stream_bp.route("/<stream_id>/viewer-token", methods=["POST"])

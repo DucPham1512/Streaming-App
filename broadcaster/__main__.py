@@ -30,7 +30,9 @@ import argparse
 import json
 import logging
 import os
+import queue
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -247,14 +249,23 @@ def main(argv: list[str] | None = None) -> int:
     classifier = CustomGestureClassifier(templates) if templates else None
 
     # ---- 3. Comment buffer, Socket.IO client, LiveKit publisher ----
-    comments = CommentBuffer(capacity=8, ttl_seconds=10.0)
-    # The loop is constructed below — late-bind the dashboard-driven
-    # callbacks via a holder dict so the GestureClient and BroadcastLoop
-    # don't have a circular construction dependency. The ApiClient is also
-    # late-bound (we build it before the loop so the auth callback can
-    # mutate its key).
+    # loop_holder / api_holder late-bind the BroadcastLoop and ApiClient so
+    # the socket callbacks can find them without a circular dependency.
     loop_holder: dict = {}
     api_holder: dict = {}
+
+    # Queue receives (publisher_token, livekit_url) when the dashboard clicks
+    # "Restart Room". maxsize=1 so duplicate signals are dropped, not queued.
+    _restart_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+
+    # Stable delegate for comments so GestureClient registers the socket handler
+    # once at init time; we swap the target buffer each session via _comment_ref.
+    _comment_ref: list = [None]
+
+    def _comment_delegate(username: str, content: str) -> None:
+        cb = _comment_ref[0]
+        if cb is not None:
+            cb(username, content)
 
     def _on_recording_start(name: str) -> None:
         loop = loop_holder.get("loop")
@@ -269,10 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         if loop is None or api is None:
             log.warning("streamer_authenticated arrived before loop was constructed; dropping")
             return
-        # Swap the bearer token used by both clients.
         api.set_api_key(new_key)
         client.set_api_key(new_key)
-        # Refetch the user's gesture customization with the new key.
         try:
             new_builtins = fetch_builtins(api_base, new_key)
             new_templates = fetch_templates(api_base, new_key)
@@ -285,11 +294,28 @@ def main(argv: list[str] | None = None) -> int:
             username=username or user_id,
         )
 
+    def _on_restart_stream(new_token: str, new_url: str) -> None:
+        # Runs on the socket.io thread — just signal the main thread via queue.
+        try:
+            _restart_queue.put_nowait((new_token, new_url))
+        except queue.Full:
+            log.warning("restart_stream: queue full, ignoring duplicate signal")
+
+    def _on_end_stream() -> None:
+        # Runs on the socket.io thread — signal the capture loop to stop.
+        loop = loop_holder.get("loop")
+        if loop is not None:
+            loop.request_end()
+        else:
+            log.warning("stream_ended received but no active loop; ignoring")
+
     client = GestureClient(
         socket_url, api_key,
-        on_comment=comments.add,
+        on_comment=_comment_delegate,
         on_recording_start=_on_recording_start,
         on_streamer_authenticated=_on_streamer_authenticated,
+        on_restart_stream=_on_restart_stream,
+        on_end_stream=_on_end_stream,
     )
     publisher = LiveKitPublisher(
         livekit_url,
@@ -300,9 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Connect Socket.IO in the background; join the room once connected.
-    import threading
     threading.Thread(target=client.connect, daemon=True).start()
-    # Give the connection a moment, then join the room.
     for _ in range(20):
         if client.connected:
             break
@@ -314,40 +338,69 @@ def main(argv: list[str] | None = None) -> int:
         publisher.start(connect_timeout_seconds=10.0)
     except Exception as e:
         log.error("Publisher failed to start: %s", e)
-        # Try to clean up the half-created stream so it doesn't linger.
         end_stream(api_base, api_key, stream_id)
         client.disconnect()
         return 3
     log.info("LiveKit publisher ready; entering capture loop")
 
-    # ---- 4. Run the capture/composite/publish loop ----
+    # ---- 4. Session loop — stays alive across restarts ----
     api = ApiClient(api_base, api_key)
-    api_holder["api"] = api  # let the streamer_authenticated callback swap its key
-    loop = BroadcastLoop(
-        stream_id=stream_id,
-        publisher=publisher,
-        client=client,
-        comments=comments,
-        camera_index=args.camera,
-        width=args.width,
-        height=args.height,
-        show_preview=not args.no_preview,
-        builtin_actions=builtin_actions,
-        classifier=classifier,
-        api_client=api,
-    )
-    loop_holder["loop"] = loop  # let the recording_start callback find it
-    result = loop.run()
-    log.info(
-        "Loop exited (%s); %d frames published",
-        result.reason, result.frames_published,
-    )
+    api_holder["api"] = api
 
-    # ---- 5. Cleanup ----
-    publisher.stop()
-    end_stream(api_base, api_key, stream_id)
-    client.disconnect()
-    return 0
+    while True:
+        comments = CommentBuffer(capacity=8, ttl_seconds=10.0)
+        _comment_ref[0] = comments.add  # point the stable delegate at the fresh buffer
+
+        loop = BroadcastLoop(
+            stream_id=stream_id,
+            publisher=publisher,
+            client=client,
+            comments=comments,
+            camera_index=args.camera,
+            width=args.width,
+            height=args.height,
+            show_preview=not args.no_preview,
+            builtin_actions=builtin_actions,
+            classifier=classifier,
+            api_client=api,
+        )
+        loop_holder["loop"] = loop
+        result = loop.run()
+        log.info("Loop exited (%s); %d frames published", result.reason, result.frames_published)
+
+        publisher.stop()
+
+        if result.reason == "quit":
+            # ---- 5. Full cleanup on deliberate quit ----
+            end_stream(api_base, api_key, stream_id)
+            client.disconnect()
+            return 0
+
+        # Stream ended gracefully (gesture or camera error).
+        # Signal the backend but keep the socket connected so the broadcaster
+        # can receive the "Restart Room" signal from the dashboard.
+        end_stream(api_base, api_key, stream_id)
+        log.info(
+            "Stream ended (%s). Click 'Restart Room' in the dashboard to "
+            "stream again, or Ctrl+C to exit.", result.reason
+        )
+
+        try:
+            new_token, new_url = _restart_queue.get()
+        except KeyboardInterrupt:
+            log.info("Interrupted while waiting for restart; exiting.")
+            client.disconnect()
+            return 0
+
+        log.info("Restart received; reconnecting LiveKit publisher to %s …", new_url)
+        try:
+            publisher.restart(new_url, new_token, connect_timeout_seconds=10.0)
+        except Exception as e:
+            log.error("Publisher restart failed: %s", e)
+            client.disconnect()
+            return 3
+
+        log.info("Publisher reconnected; resuming broadcast.")
 
 
 if __name__ == "__main__":
