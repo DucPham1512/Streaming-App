@@ -1,5 +1,7 @@
 import threading
 import sys
+import traceback
+import os
 from PIL import Image, ImageDraw
 import pystray
 
@@ -22,17 +24,23 @@ def run_tray(stop_event: threading.Event):
 
 
 def main():
-    from broadcaster.__main__ import main as broadcaster_main
+    log_path = os.path.join(os.path.expanduser("~"), "broadcaster.log")
+    try:
+        from broadcaster.__main__ import main as broadcaster_main
 
-    stop_event = threading.Event()
+        stop_event = threading.Event()
 
-    broadcast_thread = threading.Thread(
-        target=broadcaster_main, kwargs={"stop_event": stop_event}, daemon=True
-    )
-    broadcast_thread.start()
+        broadcast_thread = threading.Thread(
+            target=broadcaster_main, kwargs={"stop_event": stop_event}, daemon=True
+        )
+        broadcast_thread.start()
 
-    run_tray(stop_event)
-    broadcast_thread.join(timeout=5)
+        run_tray(stop_event)
+        broadcast_thread.join(timeout=5)
+    except Exception:
+        with open(log_path, "w") as f:
+            traceback.print_exc(file=f)
+        raise
 
 
 if __name__ == "__main__":
