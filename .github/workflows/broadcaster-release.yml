@@ -1,0 +1,56 @@
+name: Build Broadcaster Desktop App
+
+on:
+  push:
+    tags:
+      - 'broadcaster-v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Broadcaster-Windows.exe
+            dist_path: broadcaster/dist/Broadcaster.exe
+          - os: macos-latest
+            artifact: Broadcaster-macOS
+            dist_path: broadcaster/dist/Broadcaster
+          - os: ubuntu-latest
+            artifact: Broadcaster-Linux
+            dist_path: broadcaster/dist/Broadcaster
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: broadcaster
+        run: pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        working-directory: broadcaster
+        run: pyinstaller broadcaster.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.dist_path }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
