@@ -2,9 +2,9 @@ name: Backend — Build & Deploy
 
 on:
   push:
-    branches: [Development]
+    branches: [develop]
   pull_request:
-    branches: [Development]
+    branches: [develop]
 
 env:
   IMAGE_NAME: streaming-backend
@@ -33,7 +33,7 @@ jobs:
     name: Build Image & Deploy
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/Development' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
