@@ -146,7 +146,7 @@ def fetch_templates(api_base: str, api_key: str | None) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, stop_event: "threading.Event | None" = None) -> int:
     parser = argparse.ArgumentParser(description="VSR broadcaster (laptop side)")
     parser.add_argument(
         "--camera", type=int,
