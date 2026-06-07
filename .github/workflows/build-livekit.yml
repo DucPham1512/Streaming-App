@@ -2,7 +2,7 @@ name: Build and push LiveKit image
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
     paths:
       - Dockerfile.livekit
       - livekit.yaml
