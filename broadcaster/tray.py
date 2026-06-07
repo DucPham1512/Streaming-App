@@ -31,7 +31,12 @@ def main():
         stop_event = threading.Event()
 
         broadcast_thread = threading.Thread(
-            target=broadcaster_main, kwargs={"stop_event": stop_event}, daemon=True
+            target=broadcaster_main,
+            kwargs={
+                "argv": ["--api-base", "https://streaming-backend.gentlecoast-4cd95051.eastasia.azurecontainerapps.io"],
+                "stop_event": stop_event
+            },
+            daemon=True
         )
         broadcast_thread.start()
 

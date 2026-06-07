@@ -1,15 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 block_cipher = None
 
 a = Analysis(
     ['tray.py'],
     pathex=[],
-    binaries=[],
-    datas=collect_data_files('livekit.rtc'),
+    binaries=collect_dynamic_libs('mediapipe'),
+    datas=collect_data_files('livekit.rtc') + collect_data_files('mediapipe') + [('hand_landmarker.task', 'broadcaster')],
     hiddenimports=[
         'livekit.rtc.resources',
+        'mediapipe.tasks.c',
         'pystray._win32',
         'pystray._darwin',
         'pystray._xorg',

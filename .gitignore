@@ -1,9 +1,46 @@
 plan.md
+
+# Python
 .venv
+.venv-win
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Logs
+*.log
+logs/
+broadcaster.log
+
+# PyInstaller
+broadcaster/build/
+broadcaster/dist/
+*.spec.bak
+
+# Environment
+.env
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Misc
 .gitnexus
 _bmad
 _bmad-output
 .agents
 .claude
-.env
+.gitattributes

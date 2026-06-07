@@ -2,7 +2,7 @@ mediapipe==0.10.35
 opencv-python==4.10.0.84
 python-socketio[client]==5.12.1
 python-dotenv==1.2.2
-numpy==1.26.4
+numpy>=2.0.0,<3.0.0
 # LiveKit RTC client SDK — used by broadcaster/publisher.py to publish
 # composited camera frames as a WebRTC video track. See
 # docs/decisions/001-livekit-over-mux.md.
