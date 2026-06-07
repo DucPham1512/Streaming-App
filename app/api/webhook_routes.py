@@ -69,7 +69,7 @@ def livekit_webhook():
     stream_id = room.get("name")
     track = event.get("track") or {}
 
-    if event_type == "track_published" and track.get("type") == "VIDEO":
+    if event_type == "track_published" and track.get("type", "").upper() == "VIDEO":
         # Broadcaster has started publishing video → stream is watchable.
         if stream_id:
             stream_manager.mark_active(stream_id)
