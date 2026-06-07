@@ -8,11 +8,19 @@ from app.extensions import db
 from app.models.stream import Stream
 from app.services import livekit_service
 
+# How long to wait after track_unpublished before writing "disconnected" to DB.
+# If track_published arrives within this window (reconnection), the timer is
+# cancelled and the stream stays active.
+_DISCONNECT_GRACE_SECONDS = 15.0
+
 
 class StreamManager:
     def __init__(self):
         self._active_streams: dict[str, dict] = {}
         self._lock = threading.Lock()
+        # Pending disconnect timers keyed by stream_id.
+        self._disconnect_timers: dict[str, threading.Timer] = {}
+        self._timer_lock = threading.Lock()
 
     def create_stream(
         self,
@@ -152,6 +160,9 @@ class StreamManager:
 
     def mark_active(self, stream_id: str):
         """Publisher published a video track — stream is now watchable."""
+        # Cancel any pending grace-period timer — the track is back.
+        self._cancel_disconnect_timer(stream_id)
+
         stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
@@ -168,8 +179,40 @@ class StreamManager:
             })
         return stream
 
+    def schedule_disconnected(self, stream_id: str) -> None:
+        """Start a grace-period timer for a video track_unpublished event.
+
+        If track_published fires within _DISCONNECT_GRACE_SECONDS (i.e. a
+        transient reconnect), mark_active cancels the timer and the stream
+        never leaves "active". Only if the track stays gone do we write
+        "disconnected" to the DB.
+        """
+        from flask import current_app
+        app = current_app._get_current_object()
+
+        def _fire():
+            with self._timer_lock:
+                self._disconnect_timers.pop(stream_id, None)
+            with app.app_context():
+                self.mark_disconnected(stream_id)
+
+        with self._timer_lock:
+            existing = self._disconnect_timers.pop(stream_id, None)
+            if existing:
+                existing.cancel()
+            timer = threading.Timer(_DISCONNECT_GRACE_SECONDS, _fire)
+            timer.daemon = True
+            self._disconnect_timers[stream_id] = timer
+            timer.start()
+
+    def _cancel_disconnect_timer(self, stream_id: str) -> None:
+        with self._timer_lock:
+            timer = self._disconnect_timers.pop(stream_id, None)
+            if timer:
+                timer.cancel()
+
     def mark_disconnected(self, stream_id: str):
-        """Publisher participant left — transient; the room may still be reused."""
+        """Write 'disconnected' to the DB. Called by the grace-period timer."""
         stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None
@@ -179,6 +222,9 @@ class StreamManager:
 
     def mark_ended(self, stream_id: str):
         """Room was finished (LiveKit `room_finished` event)."""
+        # Cancel any pending grace timer — the room is definitively gone.
+        self._cancel_disconnect_timer(stream_id)
+
         stream = db.session.get(Stream, stream_id)
         if stream is None or stream.status == "ended":
             return None

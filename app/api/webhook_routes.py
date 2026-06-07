@@ -76,10 +76,12 @@ def livekit_webhook():
             log.info("Stream %s marked active (video track published)", stream_id)
 
     elif event_type == "track_unpublished" and track.get("type") == "VIDEO":
-        # Broadcaster's video track went away → likely a transient drop.
+        # Broadcaster's video track went away — start a grace-period timer.
+        # If track_published fires within 15 s (reconnect), the timer is
+        # cancelled and the stream stays active. See stream_manager.schedule_disconnected.
         if stream_id:
-            stream_manager.mark_disconnected(stream_id)
-            log.info("Stream %s marked disconnected (video unpublished)", stream_id)
+            stream_manager.schedule_disconnected(stream_id)
+            log.info("Stream %s disconnect timer started (video unpublished)", stream_id)
 
     elif event_type == "room_finished":
         if stream_id:

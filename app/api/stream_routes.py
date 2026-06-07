@@ -11,8 +11,11 @@ GET    /api/v1/streams                       — List active streams
 POST   /api/v1/streams/<stream_id>/like      — Increment like count
 """
 
+from datetime import datetime, timezone, timedelta
+
 from flask import Blueprint, request, jsonify
 
+from app.extensions import db
 from app.models.stream import Stream
 from app.services import livekit_service
 from app.services.stream_manager import stream_manager
@@ -173,9 +176,18 @@ def get_stream(stream_id):
 
 @stream_bp.route("", methods=["GET"])
 def list_streams():
-    """List currently broadcasting streams (status = active)."""
+    """List active streams, plus disconnected ones within the last 2 minutes."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
     streams = (
-        Stream.query.filter_by(status="active")
+        Stream.query.filter(
+            db.or_(
+                Stream.status == "active",
+                db.and_(
+                    Stream.status == "disconnected",
+                    Stream.updated_at >= cutoff,
+                ),
+            )
+        )
         .order_by(Stream.started_at.desc())
         .all()
     )
@@ -191,7 +203,6 @@ def like_stream(stream_id):
 
     No auth in v1: any client can like, no per-user dedup.
     """
-    from app.extensions import db
     stream = stream_manager.get_stream(stream_id)
     if stream is None:
         return jsonify({"error": "Stream not found"}), 404
