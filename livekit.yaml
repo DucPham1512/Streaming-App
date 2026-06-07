@@ -20,7 +20,7 @@ webhook:
   # `backend` is not in its DNS — it reaches the backend container
   # through the host-published port instead.
   urls:
-    - http://localhost:5001/api/v1/webhooks/livekit
+    - https://streaming-backend.gentlecoast-4cd95051.eastasia.azurecontainerapps.io/api/v1/webhooks/livekit
 
 logging:
   level: info
