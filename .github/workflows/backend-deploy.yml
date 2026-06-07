@@ -78,7 +78,6 @@ jobs:
             LIVEKIT_API_KEY=${{ secrets.LIVEKIT_API_KEY }}
             LIVEKIT_API_SECRET=${{ secrets.LIVEKIT_API_SECRET }}
             LIVEKIT_URL=${{ secrets.LIVEKIT_URL }}
-            LIVEKIT_URL_INTERNAL=${{ secrets.LIVEKIT_URL_INTERNAL }}
             MINIO_ENDPOINT=${{ secrets.MINIO_ENDPOINT }}
             MINIO_ACCESS_KEY=${{ secrets.MINIO_ACCESS_KEY }}
             MINIO_SECRET_KEY=${{ secrets.MINIO_SECRET_KEY }}
