@@ -132,6 +132,16 @@ _PAGE = r"""<!doctype html>
   .auth-skip {{ width: 100%; background: none; border: 0; color: var(--muted);
     padding: 10px; margin-top: 8px; cursor: pointer; font: inherit; font-size: 12px;
     text-decoration: underline; }}
+  .restart-btn {{ background: #1d4ed8; color: #fff; border: 0; border-radius: 6px;
+    padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 600;
+    cursor: pointer; margin-left: 14px; }}
+  .restart-btn:hover {{ filter: brightness(1.15); }}
+  .restart-btn:disabled {{ opacity: 0.55; cursor: not-allowed; filter: none; }}
+  .end-btn {{ background: #991b1b; color: #fff; border: 0; border-radius: 6px;
+    padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 600;
+    cursor: pointer; margin-left: 8px; }}
+  .end-btn:hover {{ background: #7f1d1d; }}
+  .end-btn:disabled {{ opacity: 0.55; cursor: not-allowed; }}
 </style>
 </head>
 <body>
@@ -147,6 +157,8 @@ _PAGE = r"""<!doctype html>
     <button id="logout-btn" style="margin-left:8px;background:none;border:0;color:var(--muted);
       cursor:pointer;font:inherit;font-size:12px;text-decoration:underline">sign out</button>
   </span>
+  <button id="end-btn" class="end-btn" onclick="endStream()">End Stream</button>
+  <button id="restart-btn" class="restart-btn" onclick="restartRoom()">Restart Room</button>
   <span class="status">
     <span id="lk-dot" class="dot"></span><span id="lk-status">video: connecting…</span>
     <span style="width:12px"></span>
@@ -490,6 +502,69 @@ _PAGE = r"""<!doctype html>
     }} else {{
       showAuthModal();
     }}
+  }});
+
+  // ---- End stream ----
+  async function endStream() {{
+    if (!confirm("End the stream? The broadcaster will pause and wait for a Restart.")) return;
+    const btn = $("end-btn");
+    btn.disabled = true;
+    btn.textContent = "Ending…";
+    try {{
+      const res = await fetch(`/api/v1/streams/${{STREAM_ID}}/end`, {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+      }});
+      if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
+      addActivity("leave", "Stream ended — click <b>Restart Room</b> to go live again.");
+      btn.textContent = "Ended";
+    }} catch (e) {{
+      btn.textContent = "End failed";
+      console.error("endStream:", e);
+      setTimeout(() => {{ btn.disabled = false; btn.textContent = "End Stream"; }}, 3000);
+    }}
+  }}
+
+  socket.on("stream_ended", () => {{
+    $("end-btn").textContent = "Ended";
+    $("end-btn").disabled = true;
+    lkStatus.textContent = "video: stream ended";
+    lkDot.classList.remove("on");
+    addActivity("leave", "Stream ended remotely.");
+  }});
+
+  // ---- LiveKit room restart ----
+  async function restartRoom() {{
+    const btn = $("restart-btn");
+    btn.disabled = true;
+    btn.textContent = "Restarting…";
+    try {{
+      const res = await fetch(`/api/v1/streams/${{STREAM_ID}}/restart`, {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+      }});
+      if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
+      addActivity("join", "LiveKit room restarted — reconnecting video…");
+      btn.textContent = "Restarted ✓";
+      const endBtn = $("end-btn");
+      endBtn.disabled = false; endBtn.textContent = "End Stream";
+      setTimeout(connectVideo, 1500);
+    }} catch (e) {{
+      btn.textContent = "Restart failed";
+      console.error("restartRoom:", e);
+    }} finally {{
+      setTimeout(() => {{ btn.disabled = false; btn.textContent = "Restart Room"; }}, 3000);
+    }}
+  }}
+
+  // Server pushes this to all room members when a restart is issued.
+  // If this tab triggered it we already called connectVideo() above;
+  // the extra call is harmless (it just re-subscribes the same track).
+  socket.on("restart_stream", () => {{
+    addActivity("join", "Room restarted — reconnecting video…");
+    const endBtn = $("end-btn");
+    endBtn.disabled = false; endBtn.textContent = "End Stream";
+    setTimeout(connectVideo, 1500);
   }});
 </script>
 </body>

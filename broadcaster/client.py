@@ -34,6 +34,8 @@ class GestureClient:
         on_comment=None,
         on_recording_start=None,
         on_streamer_authenticated=None,
+        on_restart_stream=None,
+        on_end_stream=None,
     ):
         """
         :param on_comment: optional callback ``fn(username: str, content: str)``
@@ -48,6 +50,14 @@ class GestureClient:
             ``fn(api_key: str, user_id: str, username: str)`` invoked when
             the dashboard's login propagates over. Runs on the socket.io
             thread; the consumer should hand off as above.
+        :param on_restart_stream: optional callback
+            ``fn(publisher_token: str, livekit_url: str)`` invoked when the
+            dashboard triggers a LiveKit room restart. Runs on the socket.io
+            thread; the consumer should hand off to avoid blocking the thread.
+        :param on_end_stream: optional callback ``fn()`` invoked when the
+            dashboard clicks the "End Stream" button. The backend emits a
+            ``stream_ended`` event to the room; this callback fires in response.
+            Runs on the socket.io thread.
         """
         self._url = socket_url
         self._api_key = api_key
@@ -57,6 +67,8 @@ class GestureClient:
         self._on_comment = on_comment
         self._on_recording_start = on_recording_start
         self._on_streamer_authenticated = on_streamer_authenticated
+        self._on_restart_stream = on_restart_stream
+        self._on_end_stream = on_end_stream
 
         self._sio = socketio.Client(reconnection=True, reconnection_attempts=0)
         self._sio.on("connect", self._on_connect)
@@ -70,6 +82,10 @@ class GestureClient:
             self._sio.on("recording_start", self._on_recording_start_event)
         if on_streamer_authenticated is not None:
             self._sio.on("streamer_authenticated", self._on_streamer_authenticated_event)
+        if on_restart_stream is not None:
+            self._sio.on("restart_stream", self._on_restart_stream_event)
+        if on_end_stream is not None:
+            self._sio.on("stream_ended", self._on_stream_ended_event)
 
     def set_api_key(self, api_key: str | None) -> None:
         """Swap the bearer token. Takes effect on the next reconnect.
@@ -245,3 +261,33 @@ class GestureClient:
                 self._on_streamer_authenticated(api_key, user_id, username)
         except Exception as e:
             print(f"[GestureClient] streamer_authenticated handler error: {e}")
+
+    def _on_restart_stream_event(self, data):
+        """Fires when the dashboard restarts the LiveKit room.
+
+        Runs on the socket.io thread. The registered callback should hand
+        off the reconnect work to a separate thread to avoid blocking here.
+        """
+        if not callable(self._on_restart_stream):
+            return
+        try:
+            publisher_token = (data or {}).get("publisher_token", "")
+            livekit_url = (data or {}).get("livekit_url", "")
+            if publisher_token and livekit_url:
+                self._on_restart_stream(publisher_token, livekit_url)
+        except Exception as e:
+            print(f"[GestureClient] restart_stream handler error: {e}")
+
+    def _on_stream_ended_event(self, data):
+        """Fires when the dashboard clicks 'End Stream'.
+
+        The backend emits ``stream_ended`` to the room after terminating it.
+        Runs on the socket.io thread; the callback is expected to be quick
+        (e.g. set a threading.Event).
+        """
+        if not callable(self._on_end_stream):
+            return
+        try:
+            self._on_end_stream()
+        except Exception as e:
+            print(f"[GestureClient] stream_ended handler error: {e}")
