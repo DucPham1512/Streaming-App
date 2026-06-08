@@ -37,6 +37,8 @@ class StreamManager:
             description=description,
             privacy=privacy,
             status="idle",
+            owner_identity=owner_identity,
+            owner_display_name=owner_display_name,
         )
         db.session.add(stream)
         db.session.flush()  # populate stream.id without committing yet
