@@ -114,6 +114,8 @@ class LiveKitPublisher:
         # Preallocated BGRA buffer reused per frame to avoid per-frame allocs.
         self._bgra_buf: Optional[np.ndarray] = None
 
+        self._muted: bool = False
+
     # ------------------------------------------------------------------
     # Public sync API (called from the capture thread)
     # ------------------------------------------------------------------
@@ -177,6 +179,10 @@ class LiveKitPublisher:
             vframe, timestamp_us=int(time.monotonic_ns() / 1000)
         )
         return True
+
+    def set_muted(self, muted: bool) -> None:
+        """Stop (or resume) pushing audio frames to LiveKit."""
+        self._muted = muted
 
     def stop(self, *, timeout_seconds: float = 5.0) -> None:
         """Disconnect from the room and join the worker thread."""
@@ -351,7 +357,7 @@ class LiveKitPublisher:
         await it from the PortAudio thread. asyncio.create_task() schedules
         it on the currently-running worker loop without blocking.
         """
-        if self._audio_source is None:
+        if self._audio_source is None or self._muted:
             return
         try:
             asyncio.create_task(self._audio_source.capture_frame(frame))

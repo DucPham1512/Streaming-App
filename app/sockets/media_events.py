@@ -84,6 +84,10 @@ _VALID_COMMANDS = frozenset(_COMMAND_EFFECTS.keys())
 # delayed effect events to align with Mux HLS latency is gone with Mux.
 _CONTROL_COMMANDS = frozenset({"end_stream", "mute_toggle"})
 
+# Tracks current mute state per stream so viewers receive "muted"/"unmuted"
+# rather than a generic "mute" effect on every toggle.
+_stream_muted: dict[str, bool] = {}
+
 
 def _clean_anchor(raw) -> dict | None:
     """Accept {'x': float, 'y': float} with both in [0, 1]. Return None if malformed."""
@@ -140,9 +144,14 @@ def handle_gesture_command(data):
     anchor = _clean_anchor(data.get("anchor"))
     secondary = _clean_anchor(data.get("secondary"))
 
+    effect = _COMMAND_EFFECTS[command]
+    if command == "mute_toggle":
+        _stream_muted[stream_id] = not _stream_muted.get(stream_id, False)
+        effect = "muted" if _stream_muted[stream_id] else "unmuted"
+
     payload = {
         "command": command,
-        "effect": _COMMAND_EFFECTS[command],
+        "effect": effect,
         "confidence": confidence,
         "stream_id": stream_id,
         "triggered_by": sid,

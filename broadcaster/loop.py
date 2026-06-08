@@ -261,6 +261,7 @@ class BroadcastLoop:
                                     effects.trigger(local_fx, origin=origin_px)
                                 if cmd == "mute_toggle":
                                     muted = not muted
+                                    self._publisher.set_muted(muted)
 
                 # ---- Custom k-NN classifier (only runs when no built-in match) ----
                 if (
@@ -295,6 +296,7 @@ class BroadcastLoop:
                                 effects.trigger(local_fx, origin=origin_px)
                             if custom.action == "mute_toggle":
                                 muted = not muted
+                                self._publisher.set_muted(muted)
 
                 # ---- Full fist hold → end stream ----
                 if fist_hold_frames == END_STREAM_HOLD_FRAMES:
@@ -324,6 +326,7 @@ class BroadcastLoop:
                         break
                     elif key == ord("m"):
                         muted = not muted
+                        self._publisher.set_muted(muted)
                     elif key == ord("c"):
                         effects.clear()
                     elif key == ord("e"):
