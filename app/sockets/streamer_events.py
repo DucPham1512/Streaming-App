@@ -32,7 +32,7 @@ import logging
 from flask import request as flask_request
 from flask_socketio import emit
 
-from app.extensions import socketio
+from app.extensions import db, socketio
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -98,6 +98,26 @@ def handle_streamer_authenticated(data):
         "streamer_authenticated: sid=%s stream=%s user=%s(%s)",
         sid, stream_id, user.username, user.id,
     )
+
+    # Update the stream's owner fields now that we know who the streamer is.
+    from app.services.stream_manager import stream_manager
+    stream = stream_manager.get_stream(stream_id)
+    if stream is not None and stream.owner_id is None:
+        stream.owner_id = user.id
+        stream.owner_display_name = user.display_name or user.username
+        db.session.commit()
+        logger.info("Linked stream %s to owner %s", stream_id, user.id)
+        # Notify viewers so their UI refreshes owner info.
+        socketio.emit(
+            "stream_state_update",
+            {
+                "stream_id": stream_id,
+                "effect": "owner_updated",
+                "owner_id": user.id,
+                "owner_display_name": stream.owner_display_name,
+            },
+            to=stream_id,
+        )
 
     # Also stash in the per-sid session table so subsequent events from
     # this dashboard tab (e.g. recording_start) carry user identity if
