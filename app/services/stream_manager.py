@@ -220,5 +220,12 @@ class StreamManager:
         with self._lock:
             return list(self._active_streams.keys())
 
+    def get_viewer_count(self, stream_id: str) -> int:
+        with self._lock:
+            entry = self._active_streams.get(stream_id)
+            if entry is None:
+                return 0
+            return len(entry["connected_clients"])
+
 
 stream_manager = StreamManager()

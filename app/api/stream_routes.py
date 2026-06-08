@@ -2,13 +2,14 @@
 
 Endpoints
 ---------
-POST   /api/v1/streams                       — Create a new stream
-PATCH  /api/v1/streams/<stream_id>           — Update stream metadata
-POST   /api/v1/streams/<stream_id>/end       — End (terminate) a stream
-POST   /api/v1/streams/<stream_id>/viewer-token — Mint a subscriber-only token
-GET    /api/v1/streams/<stream_id>           — Get stream details
-GET    /api/v1/streams                       — List active streams
-POST   /api/v1/streams/<stream_id>/like      — Increment like count
+POST   /api/v1/streams                              — Create a new stream
+PATCH  /api/v1/streams/<stream_id>                  — Update stream metadata
+POST   /api/v1/streams/<stream_id>/end              — End (terminate) a stream
+POST   /api/v1/streams/<stream_id>/viewer-token     — Mint a subscriber-only token
+GET    /api/v1/streams/<stream_id>                  — Get stream details
+GET    /api/v1/streams                              — List active streams
+POST   /api/v1/streams/<stream_id>/like             — Increment like count
+GET    /api/v1/streams/<stream_id>/viewer-count     — Current viewer count
 """
 
 from datetime import datetime, timezone, timedelta
@@ -195,6 +196,15 @@ def list_streams():
         "streams": [s.to_dict() for s in streams],
         "count": len(streams),
     }), 200
+
+
+@stream_bp.route("/<stream_id>/viewer-count", methods=["GET"])
+def get_viewer_count(stream_id):
+    """Return the number of Socket.IO clients currently watching this stream."""
+    stream = stream_manager.get_stream(stream_id)
+    if stream is None:
+        return jsonify({"error": "Stream not found"}), 404
+    return jsonify({"count": stream_manager.get_viewer_count(stream_id)}), 200
 
 
 @stream_bp.route("/<stream_id>/like", methods=["POST"])

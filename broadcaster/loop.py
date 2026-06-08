@@ -259,9 +259,9 @@ class BroadcastLoop:
                                 local_fx = COMMAND_LOCAL_EFFECT.get(cmd)
                                 if local_fx:
                                     effects.trigger(local_fx, origin=origin_px)
-                                if cmd == "mute_toggle":
-                                    muted = not muted
-                                    self._publisher.set_muted(muted)
+                            if cmd == "mute_toggle":
+                                muted = not muted
+                                self._publisher.set_muted(muted)
 
                 # ---- Custom k-NN classifier (only runs when no built-in match) ----
                 if (
@@ -294,9 +294,9 @@ class BroadcastLoop:
                                     int(custom_anchor[1] * h),
                                 )
                                 effects.trigger(local_fx, origin=origin_px)
-                            if custom.action == "mute_toggle":
-                                muted = not muted
-                                self._publisher.set_muted(muted)
+                        if custom.action == "mute_toggle":
+                            muted = not muted
+                            self._publisher.set_muted(muted)
 
                 # ---- Full fist hold → end stream ----
                 if fist_hold_frames == END_STREAM_HOLD_FRAMES:
@@ -327,6 +327,7 @@ class BroadcastLoop:
                     elif key == ord("m"):
                         muted = not muted
                         self._publisher.set_muted(muted)
+                        self._client.send_gesture("mute_toggle", self._stream_id)
                     elif key == ord("c"):
                         effects.clear()
                     elif key == ord("e"):
