@@ -33,8 +33,15 @@ class Stream(db.Model):
     like_count = db.Column(db.Integer, nullable=False, default=0)
 
     # Optional owner info set at stream creation time.
-    # owner_identity is the LiveKit participant identity (often a username).
+    # owner_id is a FK to the users table (nullable for anonymous/legacy streams).
+    # owner_identity is the LiveKit participant identity passed by the broadcaster.
     # owner_display_name is the human-readable name shown in the viewer UI.
+    owner_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", name="fk_streams_owner_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     owner_identity = db.Column(db.String(255), nullable=True)
     owner_display_name = db.Column(db.String(128), nullable=True)
 
@@ -65,6 +72,7 @@ class Stream(db.Model):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "owner_id": self.owner_id,
             "owner_identity": self.owner_identity,
             "owner_display_name": self.owner_display_name,
         }

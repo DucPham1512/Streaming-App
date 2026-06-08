@@ -20,6 +20,7 @@ class StreamManager:
         description: str = "",
         privacy: str = "public",
         *,
+        owner_id: Optional[str] = None,
         owner_identity: Optional[str] = None,
         owner_display_name: Optional[str] = None,
     ) -> tuple[Stream, str, str]:
@@ -37,6 +38,7 @@ class StreamManager:
             description=description,
             privacy=privacy,
             status="idle",
+            owner_id=owner_id,
             owner_identity=owner_identity,
             owner_display_name=owner_display_name,
         )

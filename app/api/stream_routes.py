@@ -20,6 +20,7 @@ from app.extensions import db
 from app.models.stream import Stream
 from app.services import livekit_service
 from app.services.stream_manager import stream_manager
+from app.services.auth_service import current_user_optional
 
 stream_bp = Blueprint("streams", __name__, url_prefix="/api/v1/streams")
 
@@ -38,13 +39,25 @@ def create_stream():
     if privacy not in ("public", "private", "unlisted"):
         return jsonify({"error": "privacy must be public, private, or unlisted"}), 400
 
+    # Resolve the authenticated user (optional — anonymous streams are allowed).
+    # Use their id as the canonical owner link; fall back to request-supplied
+    # display name so the broadcaster can still set a name without an account.
+    authed_user = current_user_optional()
+    resolved_owner_id = authed_user.id if authed_user else None
+    resolved_display_name = (
+        owner_display_name
+        or (authed_user.display_name if authed_user else None)
+        or (authed_user.username if authed_user else None)
+    )
+
     try:
         stream, publisher_token, livekit_url = stream_manager.create_stream(
             title=title,
             description=description,
             privacy=privacy,
+            owner_id=resolved_owner_id,
             owner_identity=owner_identity,
-            owner_display_name=owner_display_name,
+            owner_display_name=resolved_display_name,
         )
     except livekit_service.LiveKitServiceError as e:
         return jsonify({"error": "Failed to provision stream", "detail": str(e)}), 502
