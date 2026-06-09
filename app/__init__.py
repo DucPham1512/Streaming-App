@@ -48,6 +48,7 @@ def create_app(config_name=None):
     storage_service.init_app(application)
 
     from app.api.auth_routes import auth_bp
+    from app.api.user_routes import user_bp
     from app.api.stream_routes import stream_bp
     from app.api.config_routes import config_bp
     from app.api.media_routes import media_bp
@@ -56,6 +57,7 @@ def create_app(config_name=None):
     from app.api.gesture_routes import gesture_bp
 
     application.register_blueprint(auth_bp)
+    application.register_blueprint(user_bp)
     application.register_blueprint(stream_bp)
     application.register_blueprint(config_bp)
     application.register_blueprint(media_bp)

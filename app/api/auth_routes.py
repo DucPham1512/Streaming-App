@@ -2,10 +2,11 @@
 
 Routes
 ------
-POST /api/v1/auth/register  — Create a new account
-POST /api/v1/auth/login     — Authenticate and obtain an API key
-POST /api/v1/auth/logout    — Invalidate the current API key
-GET  /api/v1/auth/me        — Return the authenticated user's profile
+POST  /api/v1/auth/register  — Create a new account
+POST  /api/v1/auth/login     — Authenticate and obtain an API key
+POST  /api/v1/auth/logout    — Invalidate the current API key
+GET   /api/v1/auth/me        — Return the authenticated user's profile
+PATCH /api/v1/auth/me        — Update display_name or avatar_media_id
 """
 
 import re
@@ -124,8 +125,51 @@ def logout():
 @auth_bp.get("/me")
 @require_auth
 def me():
-    """Return the authenticated user's profile.
+    """Return the authenticated user's profile."""
+    return jsonify({"user": _user_with_avatar(g.current_user)}), 200
 
-    Returns 200 ``{user}`` on success.
-    """
-    return jsonify({"user": g.current_user.to_dict()}), 200
+
+@auth_bp.patch("/me")
+@require_auth
+def update_me():
+    """Update display_name or avatar_media_id for the current user."""
+    data = request.get_json(silent=True) or {}
+    user = g.current_user
+
+    if "display_name" in data:
+        user.display_name = (data["display_name"] or "").strip() or None
+
+    if "avatar_media_id" in data:
+        media_id = data["avatar_media_id"]
+        if media_id is None:
+            user.avatar_media_id = None
+        else:
+            from app.models.media import MediaItem
+            item = MediaItem.query.filter_by(id=media_id, owner_id=user.id).first()
+            if item is None:
+                raise InvalidField("media item not found or not owned by you", field="avatar_media_id")
+            user.avatar_media_id = media_id
+
+    if "new_password" in data:
+        current_password = data.get("current_password") or ""
+        new_password = data.get("new_password") or ""
+        if not user.check_password(current_password):
+            raise Unauthorized("Current password is incorrect")
+        if len(new_password) < 8:
+            raise InvalidField("Password must be at least 8 characters", field="new_password")
+        if len(new_password) > 128:
+            raise InvalidField("Password must be at most 128 characters", field="new_password")
+        user.set_password(new_password)
+
+    db.session.commit()
+    return jsonify({"user": _user_with_avatar(user)}), 200
+
+
+def _user_with_avatar(user) -> dict:
+    """Serialize a user and include avatar_url if they have an avatar set."""
+    data = user.to_dict()
+    if user.avatar_media_id:
+        data["avatar_url"] = f"/api/v1/media/{user.avatar_media_id}/stream"
+    else:
+        data["avatar_url"] = None
+    return data

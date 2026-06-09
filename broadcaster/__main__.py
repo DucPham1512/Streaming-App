@@ -37,8 +37,6 @@ import time
 import urllib.error
 import urllib.request
 
-import getpass
-
 import dotenv
 
 dotenv.load_dotenv()
@@ -84,7 +82,7 @@ def login(api_base: str, username: str, password: str) -> str:
     resp = _http_json(
         "POST",
         f"{api_base.rstrip('/')}/api/v1/auth/login",
-        {"username": username, "password": password},
+        {"login": username, "password": password},
         None,
     )
     return resp["api_key"]
@@ -221,16 +219,33 @@ def main(argv: list[str] | None = None, stop_event: "threading.Event | None" = N
     socket_url = args.socket_url or os.environ.get("SOCKET_URL", api_base)
     api_key = args.api_key or os.environ.get("API_KEY") or None
 
-    # If no API key available, prompt for credentials and exchange for a key.
+    # If no API key available, show a login dialog and exchange credentials.
     if not api_key:
-        print("No API key found. Please log in.")
         try:
-            username = input("Username: ").strip()
-            password = getpass.getpass("Password: ")
-            api_key = login(api_base, username, password)
-            log.info("Logged in as %s", username)
+            import tkinter as tk
+            from tkinter import simpledialog, messagebox
+
+            root = tk.Tk()
+            root.withdraw()
+
+            while not api_key:
+                username = simpledialog.askstring("Login", "Username:", parent=root)
+                if username is None:
+                    log.error("Login cancelled.")
+                    return 1
+                password = simpledialog.askstring("Login", "Password:", parent=root, show="*")
+                if password is None:
+                    log.error("Login cancelled.")
+                    return 1
+                try:
+                    api_key = login(api_base, username.strip(), password)
+                    log.info("Logged in as %s", username.strip())
+                except Exception as e:
+                    messagebox.showerror("Login failed", str(e))
+
+            root.destroy()
         except Exception as e:
-            log.error("Login failed: %s", e)
+            log.error("Login dialog failed: %s", e)
             return 1
 
     log.info("Backend: %s", api_base)
