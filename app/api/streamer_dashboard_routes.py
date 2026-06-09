@@ -154,8 +154,6 @@ _PAGE = r"""<!doctype html>
   </a>
   <span id="who" style="margin-left:14px;color:var(--good);font-size:12px;display:none">
     Signed in as <b id="who-name"></b>
-    <button id="logout-btn" style="margin-left:8px;background:none;border:0;color:var(--muted);
-      cursor:pointer;font:inherit;font-size:12px;text-decoration:underline">sign out</button>
   </span>
   <button id="end-btn" class="end-btn" onclick="endStream()">End Stream</button>
   <button id="restart-btn" class="restart-btn" onclick="restartRoom()">Restart Room</button>
@@ -462,14 +460,6 @@ _PAGE = r"""<!doctype html>
   }};
 
   $("auth-skip").onclick = hideAuthModal;
-  $("logout-btn").onclick = () => {{
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(STORAGE_USER);
-    showSignedOut();
-    showAuthModal();
-    // We don't bother telling the broadcaster — it just keeps using
-    // whatever identity was last applied. Next sign-in propagates.
-  }};
 
   socket.on("streamer_auth_ack", (data) => {{
     addActivity("join", `<b>${{escape(data.username || "you")}}</b> identity applied to broadcaster`);
