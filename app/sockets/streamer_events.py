@@ -32,7 +32,7 @@ import logging
 from flask import request as flask_request
 from flask_socketio import emit
 
-from app.extensions import socketio
+from app.extensions import db, socketio
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -99,8 +99,15 @@ def handle_streamer_authenticated(data):
         sid, stream_id, user.username, user.id,
     )
 
-    # Notify viewers so their UI reflects the now-authenticated streamer.
-    # user is already resolved above — no DB write needed.
+    # Persist owner info so new viewers get it from the REST response too.
+    from app.services.stream_manager import stream_manager
+    stream = stream_manager.get_stream(stream_id)
+    if stream is not None and stream.owner_identity is None:
+        stream.owner_identity = user.id
+        stream.owner_display_name = user.display_name or user.username
+        db.session.commit()
+
+    # Notify already-connected viewers live.
     socketio.emit(
         "stream_state_update",
         {

@@ -37,6 +37,8 @@ import time
 import urllib.error
 import urllib.request
 
+import getpass
+
 import dotenv
 
 dotenv.load_dotenv()
@@ -75,6 +77,17 @@ def _http_json(method: str, url: str, body: dict | None, api_key: str | None) ->
         ) from e
     except Exception as e:
         raise RuntimeError(f"{method} {url} failed: {e}") from e
+
+
+def login(api_base: str, username: str, password: str) -> str:
+    """POST /api/v1/auth/login. Returns the api_key string."""
+    resp = _http_json(
+        "POST",
+        f"{api_base.rstrip('/')}/api/v1/auth/login",
+        {"username": username, "password": password},
+        None,
+    )
+    return resp["api_key"]
 
 
 def create_stream(api_base: str, api_key: str | None, title: str) -> dict:
@@ -207,6 +220,18 @@ def main(argv: list[str] | None = None, stop_event: "threading.Event | None" = N
     api_base = args.api_base or os.environ.get("API_BASE", "http://localhost:5001")
     socket_url = args.socket_url or os.environ.get("SOCKET_URL", api_base)
     api_key = args.api_key or os.environ.get("API_KEY") or None
+
+    # If no API key available, prompt for credentials and exchange for a key.
+    if not api_key:
+        print("No API key found. Please log in.")
+        try:
+            username = input("Username: ").strip()
+            password = getpass.getpass("Password: ")
+            api_key = login(api_base, username, password)
+            log.info("Logged in as %s", username)
+        except Exception as e:
+            log.error("Login failed: %s", e)
+            return 1
 
     log.info("Backend: %s", api_base)
     log.info("Camera:  index=%d (%dx%d)", args.camera, args.width, args.height)
