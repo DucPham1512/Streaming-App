@@ -40,10 +40,10 @@ def create_stream():
         return jsonify({"error": "privacy must be public, private, or unlisted"}), 400
 
     # Resolve the authenticated user (optional — anonymous streams are allowed).
-    # Use their id as the canonical owner link; fall back to request-supplied
-    # display name so the broadcaster can still set a name without an account.
+    # Store their UUID as owner_identity so the viewer UI can navigate to their
+    # profile. Fall back to the request-supplied identity for anonymous streams.
     authed_user = current_user_optional()
-    resolved_owner_id = authed_user.id if authed_user else None
+    resolved_owner_identity = (authed_user.id if authed_user else None) or owner_identity
     resolved_display_name = (
         owner_display_name
         or (authed_user.display_name if authed_user else None)
@@ -55,8 +55,7 @@ def create_stream():
             title=title,
             description=description,
             privacy=privacy,
-            owner_id=resolved_owner_id,
-            owner_identity=owner_identity,
+            owner_identity=resolved_owner_identity,
             owner_display_name=resolved_display_name,
         )
     except livekit_service.LiveKitServiceError as e:
