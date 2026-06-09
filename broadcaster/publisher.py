@@ -185,8 +185,8 @@ class LiveKitPublisher:
         """Mute or unmute the published audio track at the WebRTC level."""
         self._muted = muted
         if self._audio_track is not None and self._loop is not None:
-            coro = self._audio_track.mute() if muted else self._audio_track.unmute()
-            asyncio.run_coroutine_threadsafe(coro, self._loop)
+            fn = self._audio_track.mute if muted else self._audio_track.unmute
+            self._loop.call_soon_threadsafe(fn)
 
     def stop(self, *, timeout_seconds: float = 5.0) -> None:
         """Disconnect from the room and join the worker thread."""

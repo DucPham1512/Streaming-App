@@ -488,6 +488,28 @@ _PAGE = r"""<!doctype html>
     }});
   }});
 
+  // If the broadcaster opened this tab with #api_key=..., seed localStorage
+  // immediately so the socket.on("connect") handler below can auto-propagate
+  // without showing the login modal.
+  (function () {{
+    const hash = window.location.hash;
+    if (!hash) return;
+    const params = new URLSearchParams(hash.slice(1));
+    const key = params.get("api_key");
+    if (!key) return;
+    // Remove the hash from the URL so it doesn't linger in browser history.
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    // Verify the key and store the user info.
+    fetch("/api/v1/auth/me", {{ headers: {{ Authorization: "Bearer " + key }} }})
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error("invalid key")))
+      .then((data) => {{
+        localStorage.setItem(STORAGE_KEY, key);
+        localStorage.setItem(STORAGE_USER, data.user.username);
+        showSignedIn(data.user.display_name || data.user.username);
+      }})
+      .catch(() => {{}});
+  }})();
+
   // On first load, if we already have a saved key, restore the signed-in
   // state and re-propagate (broadcaster may have just been restarted).
   // socket.on("connect") above will join_room first; then we propagate.

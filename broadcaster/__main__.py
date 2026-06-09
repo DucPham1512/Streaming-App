@@ -219,31 +219,107 @@ def main(argv: list[str] | None = None, stop_event: "threading.Event | None" = N
     socket_url = args.socket_url or os.environ.get("SOCKET_URL", api_base)
     api_key = args.api_key or os.environ.get("API_KEY") or None
 
-    # If no API key available, show a login dialog and exchange credentials.
+    # If no API key available, show a login dialog.
+    # Returns (api_key | None, cancelled: bool).
+    # api_key=None means guest mode; cancelled=True means the user closed the window.
     if not api_key:
         try:
             import tkinter as tk
-            from tkinter import simpledialog, messagebox
 
-            root = tk.Tk()
-            root.withdraw()
+            result: dict = {"api_key": None, "cancelled": False}
 
-            while not api_key:
-                username = simpledialog.askstring("Login", "Username:", parent=root)
-                if username is None:
-                    log.error("Login cancelled.")
-                    return 1
-                password = simpledialog.askstring("Login", "Password:", parent=root, show="*")
-                if password is None:
-                    log.error("Login cancelled.")
-                    return 1
-                try:
-                    api_key = login(api_base, username.strip(), password)
-                    log.info("Logged in as %s", username.strip())
-                except Exception as e:
-                    messagebox.showerror("Login failed", str(e))
+            def _show_login_dialog():
+                win = tk.Tk()
+                win.title("Broadcaster Login")
+                win.resizable(False, False)
+                win.configure(bg="#1e1e2e")
 
-            root.destroy()
+                FG, BG, ENTRY_BG = "#cdd6f4", "#1e1e2e", "#313244"
+                ACCENT, MUTED = "#cba6f7", "#6c7086"
+
+                tk.Label(win, text="Sign in to Broadcaster", font=("Segoe UI", 13, "bold"),
+                         fg=FG, bg=BG).pack(pady=(18, 4))
+                tk.Label(win, text="Or continue as guest to stream without an account.",
+                         font=("Segoe UI", 9), fg=MUTED, bg=BG, wraplength=280).pack(pady=(0, 12))
+
+                tk.Label(win, text="Username or email", font=("Segoe UI", 9),
+                         fg=MUTED, bg=BG, anchor="w").pack(fill="x", padx=16)
+                user_var = tk.StringVar()
+                user_entry = tk.Entry(win, textvariable=user_var, font=("Segoe UI", 10),
+                                      fg=FG, bg=ENTRY_BG, insertbackground=FG,
+                                      relief="flat", bd=4)
+                user_entry.pack(fill="x", padx=16, pady=(2, 8))
+
+                tk.Label(win, text="Password", font=("Segoe UI", 9),
+                         fg=MUTED, bg=BG, anchor="w").pack(fill="x", padx=16)
+                pw_var = tk.StringVar()
+                pw_entry = tk.Entry(win, textvariable=pw_var, show="•", font=("Segoe UI", 10),
+                                    fg=FG, bg=ENTRY_BG, insertbackground=FG,
+                                    relief="flat", bd=4)
+                pw_entry.pack(fill="x", padx=16, pady=(2, 4))
+
+                err_var = tk.StringVar()
+                err_label = tk.Label(win, textvariable=err_var, font=("Segoe UI", 9),
+                                     fg="#f38ba8", bg=BG)
+                err_label.pack(pady=(0, 8))
+
+                def do_login(_event=None):
+                    u = user_var.get().strip()
+                    p = pw_var.get()
+                    if not u or not p:
+                        err_var.set("Enter username and password.")
+                        return
+                    login_btn.config(state="disabled", text="Signing in…")
+                    err_var.set("")
+                    win.update_idletasks()
+                    try:
+                        result["api_key"] = login(api_base, u, p)
+                        log.info("Logged in as %s", u)
+                        win.destroy()
+                    except Exception as exc:
+                        err_var.set(str(exc))
+                        login_btn.config(state="normal", text="Sign in")
+
+                def do_guest():
+                    log.info("Continuing as guest (no API key).")
+                    win.destroy()
+
+                def on_close():
+                    result["cancelled"] = True
+                    win.destroy()
+
+                win.protocol("WM_DELETE_WINDOW", on_close)
+                pw_entry.bind("<Return>", do_login)
+
+                login_btn = tk.Button(win, text="Sign in", command=do_login,
+                                      font=("Segoe UI", 10, "bold"),
+                                      fg="#1e1e2e", bg=ACCENT, activebackground=ACCENT,
+                                      relief="flat", bd=0, padx=10, pady=6, cursor="hand2")
+                login_btn.pack(fill="x", padx=16, pady=(0, 6))
+
+                guest_btn = tk.Button(win, text="Continue as Guest", command=do_guest,
+                                      font=("Segoe UI", 9),
+                                      fg=MUTED, bg=BG, activeforeground=FG, activebackground=BG,
+                                      relief="flat", bd=0, pady=6, cursor="hand2")
+                guest_btn.pack(fill="x", padx=16, pady=(0, 16))
+
+                win.update_idletasks()
+                # Center on screen
+                w, h = win.winfo_width(), win.winfo_height()
+                sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+                win.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+
+                user_entry.focus_set()
+                win.mainloop()
+
+            _show_login_dialog()
+
+            if result["cancelled"]:
+                log.error("Login cancelled.")
+                return 1
+
+            api_key = result["api_key"]  # None = guest mode, that's fine
+
         except Exception as e:
             log.error("Login dialog failed: %s", e)
             return 1
@@ -262,7 +338,7 @@ def main(argv: list[str] | None = None, stop_event: "threading.Event | None" = N
     livekit_url = resp["livekit_url"]
     log.info("Stream created: id=%s", stream_id)
     log.info("LiveKit URL: %s", livekit_url)
-    dashboard_url = f"{api_base.rstrip('/')}/streamer/{stream_id}"
+    dashboard_url = f"{api_base.rstrip('/')}/streamer/{stream_id}" + (f"#api_key={api_key}" if api_key else "")
     log.info("Streamer dashboard: %s", dashboard_url)
     if not args.no_dashboard:
         import webbrowser
