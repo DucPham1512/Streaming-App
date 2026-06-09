@@ -1,6 +1,6 @@
 """drop_owner_id_from_streams
 
-Revision ID: f6a7b8c9d0e1
+Revision ID: a2b3c4d5e6f7
 Revises: e5f6a7b8c9d0e1f2
 Create Date: 2026-06-09
 """
@@ -9,7 +9,7 @@ from typing import Sequence, Union
 from alembic import op
 
 
-revision: str = "f6a7b8c9d0e1"
+revision: str = "a2b3c4d5e6f7"
 down_revision: Union[str, None] = "e5f6a7b8c9d0e1f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
