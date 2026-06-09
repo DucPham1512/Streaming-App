@@ -115,6 +115,7 @@ class LiveKitPublisher:
         self._bgra_buf: Optional[np.ndarray] = None
 
         self._muted: bool = False
+        self._audio_track: Optional[rtc.LocalAudioTrack] = None
 
     # ------------------------------------------------------------------
     # Public sync API (called from the capture thread)
@@ -181,8 +182,11 @@ class LiveKitPublisher:
         return True
 
     def set_muted(self, muted: bool) -> None:
-        """Stop (or resume) pushing audio frames to LiveKit."""
+        """Mute or unmute the published audio track at the WebRTC level."""
         self._muted = muted
+        if self._audio_track is not None and self._loop is not None:
+            coro = self._audio_track.mute() if muted else self._audio_track.unmute()
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def stop(self, *, timeout_seconds: float = 5.0) -> None:
         """Disconnect from the room and join the worker thread."""
@@ -218,6 +222,7 @@ class LiveKitPublisher:
         self._stop_requested = False
         self._source = None
         self._audio_source = None
+        self._audio_track = None
         self._mic_stream = None
         self._room = None
         self._loop = None
@@ -292,6 +297,7 @@ class LiveKitPublisher:
                             source=rtc.TrackSource.SOURCE_MICROPHONE
                         ),
                     )
+                    self._audio_track = atrack
                     self._start_mic_capture()
                     log.info("LiveKit audio track published; mic running")
                 except Exception:                   # noqa: BLE001
