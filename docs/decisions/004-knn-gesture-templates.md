@@ -5,7 +5,7 @@
 
 ## Context
 
-Today's gesture detector (`gesture_demo/detector.py`) is **rule-based**: `classify()` inspects which fingers are extended and matches against hardcoded patterns (peace sign, fist, thumbs up, etc.). This is fast, predictable, and easy to debug, but streamers cannot:
+Today's gesture detector (`broadcaster/detector.py`) is **rule-based**: `classify()` inspects which fingers are extended and matches against hardcoded patterns (peace sign, fist, thumbs up, etc.). This is fast, predictable, and easy to debug, but streamers cannot:
 
 1. **Re-map a built-in gesture** to a different action (e.g., "I want peace sign to trigger fireworks instead of confetti").
 2. **Record a new custom gesture** that the rule-based system doesn't know about.
@@ -44,4 +44,4 @@ Built-in rule-based detection runs **first** every frame; k-NN matching is the f
 - Two tables (`gesture_overrides` + `gesture_templates`) instead of one unified table. The unified version would duplicate built-in rows for every user; this design keeps the overrides table small. See plan Step 10 for the resolution algorithm.
 - The action picker is currently a fixed list (heart, confetti, fireworks, like, end_stream, mute_toggle). Extending it to user-defined actions (custom sounds, text overlays) is a future concern, not part of this decision.
 
-**Implementation note:** landmark normalization (wrist-centered, palm-scale-invariant) is what makes k-NN robust to absolute position and distance from camera. Without it, "peace sign at top-left of frame" and "peace sign at center" would be different templates. The normalization step lives in `app/broadcaster/custom_classifier.py`.
+**Implementation note:** landmark normalization (wrist-centered, palm-scale-invariant) is what makes k-NN robust to absolute position and distance from camera. Without it, "peace sign at top-left of frame" and "peace sign at center" would be different templates. The normalization step lives in `broadcaster/custom_classifier.py`.

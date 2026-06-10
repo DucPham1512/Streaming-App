@@ -10,17 +10,18 @@ Replacing Mux with LiveKit opens the question of where the broadcaster runs. Opt
 1. **Phone (React Native publishing):** the streamer's phone runs the LiveKit RN SDK, captures camera, detects gestures on-device, and publishes. Matches a typical "social streaming" mental model.
 2. **Laptop (Python publishing):** the streamer's laptop runs a Python process that opens the camera (USB webcam or built-in), detects gestures, composites effects, and publishes via the `livekit-rtc` Python SDK.
 
-Existing code matters: the project already has a working Python broadcaster — `gesture_demo/demo.py` — built on OpenCV + MediaPipe Hands, fully debugged for landmark anchoring (`PROBLEMS_AND_SOLUTIONS.md` #17–18). Today's dev flow requires two commands (`python run.py` and `python gesture_demo/demo.py --camera 2`), which the team finds annoying.
+Existing code matters: the project already has a working Python broadcaster — built on OpenCV + MediaPipe Hands, fully debugged for landmark anchoring (`PROBLEMS_AND_SOLUTIONS.md` #17–18). Today's dev flow requires two commands (`python run.py` and `python -m broadcaster --camera 2`), which the team finds annoying.
 
 ## Decision
 
-The broadcaster is a **Python process running on the streamer's laptop**, integrated into the backend service. Specifically:
+The broadcaster is a **Python process running on the streamer's laptop**, distributed as a standalone executable. Specifically:
 
-- `gesture_demo/` is moved to `app/broadcaster/` and becomes a proper module of the backend.
-- A new `app/broadcaster/publisher.py` wraps `livekit-rtc` and publishes composited numpy frames.
-- The whole system starts with one command (`docker-compose up`), which launches Flask, LiveKit, Postgres, MinIO, and the broadcaster worker together.
-- For a second concurrent streamer on a second laptop, the same module runs as a standalone CLI (`python -m app.broadcaster --api-base ... --livekit-url ...`) with no Docker.
-- The frontend app becomes **viewer-only**: no "Go Live" screen, no camera publishing in RN, no compositing in RN.
+- The broadcaster lives in `broadcaster/` at the root of this repo (not in `app/`).
+- `broadcaster/publisher.py` wraps `livekit-rtc` and publishes composited numpy frames.
+- `broadcaster/__main__.py` shows a tkinter login dialog at startup, then creates a stream, connects, and auto-opens the streamer dashboard.
+- The backend stack starts with `./start.sh` (Linux/macOS) or `docker compose up` + `Broadcaster.exe` (Windows).
+- For a second concurrent streamer on a second laptop, just run `Broadcaster.exe` (or `python -m broadcaster`) pointing at the host's backend URL — no Docker needed on the second laptop.
+- The frontend app is **viewer-only**: no "Go Live" screen, no camera publishing in RN, no compositing in RN.
 
 ## Alternatives Considered
 

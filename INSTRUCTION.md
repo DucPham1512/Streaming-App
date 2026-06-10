@@ -28,7 +28,7 @@ git clone <frontend-repo-url> FE-Streaming-app
 
 - **Docker** and **Docker Compose** (for the backend stack)
 - **Python 3.10+** and a venv (for the host-side broadcaster)
-- **Node.js 18+** and **npm** (for the FE)
+- **Node.js 20+** and **npm** (for the FE)
 - A **webcam** and **microphone** on the broadcaster laptop
 - All phones / viewer laptops on the **same Wi-Fi** as the host laptop
 
@@ -56,8 +56,41 @@ docker-compose, waits for the backend's `/api/v1/streams` to respond,
 and execs `python -m broadcaster` on the host so the camera, mic, and
 preview window all work natively.
 
-Quit with `q` in the OpenCV preview window (cleanly ends the stream),
+### Login dialog
+
+At startup, a small dialog appears:
+
+- Enter your **username and password** and click **Sign in**, or
+- Click **Continue as Guest** to stream without an account.
+
+After login, the streamer dashboard auto-opens in your default browser —
+pre-authenticated as the same account. No second login required.
+
+Quit with `Q` in the OpenCV preview window (cleanly ends the stream),
 or Ctrl-C in the terminal.
+
+### Windows (native)
+
+On Windows, run the two halves manually (no Bash needed):
+
+```powershell
+# Terminal 1: backend stack
+cd Streaming-App
+docker compose up -d --build
+
+# Terminal 2: broadcaster (pre-built exe)
+.\Broadcaster.exe
+```
+
+Or run from source:
+
+```powershell
+cd Streaming-App
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r broadcaster/requirements.txt
+python -m broadcaster
+```
 
 ---
 
@@ -87,8 +120,9 @@ laptop (Step 1).
 
 ## 3. End-to-end demo flow
 
-1. **Host laptop:** `./start.sh` in `Streaming-App/`. Camera light
-   comes on, OpenCV preview opens.
+1. **Host laptop:** `./start.sh` in `Streaming-App/` (Linux/macOS) or
+   launch `Broadcaster.exe` after `docker compose up` (Windows). Camera
+   light comes on, OpenCV preview opens.
 2. **Viewer phones / laptops:** open `http://<host-laptop-ip>:8081`
    (or the dev-client app). The stream appears in the swipe feed.
 3. **Comments** typed in the FE pop up on the right edge of the
@@ -96,9 +130,11 @@ laptop (Step 1).
 4. **Gestures:** open palm = mute, peace = confetti, fist (hold 3s) =
    end stream, etc. Effects are baked into the published video so all
    viewers see them simultaneously.
+5. **Profile controls:** tap your avatar to change your profile picture;
+   tap ⚙️ gear to change your display name or password.
 
-For **two streamers at once** (the second laptop sets up as a remote
-broadcaster pointing at the first), see
+For **two streamers at once** (the second laptop runs a broadcaster
+pointing at the first), see
 [broadcaster/BROADCASTER.md](broadcaster/BROADCASTER.md).
 
 ---
@@ -109,7 +145,7 @@ Each user can:
 
 - **Remap a built-in gesture** to a different action (e.g. peace →
   fireworks instead of confetti). Pick from the action picker in the
-  **Gesture Library** screen in the FE.
+  **Manage Gestures** page (linked from the streamer dashboard).
 - **Record a new custom gesture** by pressing `R` in the broadcaster's
   OpenCV preview window: type a name, hold the pose for the on-screen
   countdown, captures 10 frames. Then open the Gesture Library and
@@ -128,7 +164,7 @@ source .venv/bin/activate
 pytest -q
 ```
 
-Currently 118 tests across REST routes, sockets, auth, media uploads,
+Currently covers REST routes, sockets, auth, media uploads,
 the custom-gesture classifier, and the recording session state machine.
 
 ---
@@ -146,22 +182,27 @@ the custom-gesture classifier, and the recording session state machine.
   `libportaudio2` (Linux) and re-run.
 - **Phone can't reach backend** — your phone's `API_BASE` must be the
   laptop's LAN IP (not `localhost`). Confirm both are on the same Wi-Fi
-  and the firewall allows inbound on `5001`, `7880`, `7881`, `50000–60000/udp`.
+  and the firewall allows inbound on `5001`, `7880`, `7881`,
+  `50000–60000/udp`.
 - **Gesture not firing** — press `L` in the broadcaster window to list
   current templates; check that the action isn't `unmapped`. If it is,
-  open the FE Gesture Library and assign one.
+  open the Manage Gestures page and assign one.
+- **Dashboard shows wrong account** — the dashboard auto-logs in via a
+  URL hash parameter. If another account is already signed in on your
+  browser, the hash login overwrites it. Clear your browser's localStorage
+  for the site or use a different browser profile for viewer vs. streamer.
 
 ---
 
 ## 7. Where to read more
 
 - **Why LiveKit, why burn-in compositing, why laptop broadcaster, why
-  k-NN gestures:** [docs/decisions/](docs/decisions/) (four ~1-page
-  ADRs).
+  k-NN gestures:** [docs/decisions/](docs/decisions/) (four ~1-page ADRs).
 - **Two-laptop broadcaster setup + CLI reference + per-key shortcut
   table:** [broadcaster/BROADCASTER.md](broadcaster/BROADCASTER.md).
 - **Backend architecture (routes, models, services):** [README.md](README.md).
 - **Frontend setup + dev-client build + web export:**
   [../FE-Streaming-app/README.md](../FE-Streaming-app/README.md).
+- **Full setup walkthrough (Ubuntu + Windows):** [SETUP.md](SETUP.md).
 - **Edge cases and bugs you hit so the next person doesn't:**
   `../PROBLEMS_AND_SOLUTIONS.md` (top-level of the streaming workspace).

@@ -144,28 +144,43 @@ once Expo is running — Windows can reach WSL2's localhost.
 
 #### 2B-iii. Full path — native Windows broadcaster
 
-On native Windows the broadcaster needs:
-- **OpenCV** — `pip install opencv-python` (bundles its own libs).
-- **Microphone access** — `sounddevice` works on Windows via PortAudio
-  (`pip install sounddevice` includes a Windows wheel — no apt install
-  needed).
-- **MediaPipe** — `pip install mediapipe` works on Python 3.11 Windows.
+On native Windows, use the pre-built `Broadcaster.exe` (simplest) or
+run from source.
 
-The `start.sh` script is Bash; on native Windows use **Git Bash**
-(installed with Git for Windows) and run `bash start.sh`. Or run the
-two halves manually:
+**Pre-built exe** (recommended):
 
 ```powershell
 # Terminal 1: backend stack
 cd Streaming-App
 docker compose up -d --build
 
-# Terminal 2 (Git Bash or PowerShell): broadcaster
+# Terminal 2: broadcaster
+.\Broadcaster.exe
+```
+
+A login dialog appears — sign in or continue as guest. The streamer
+dashboard auto-opens in your browser, pre-authenticated.
+
+**From source** (if you need to modify broadcaster code):
+
+```powershell
+# Terminal 1: backend stack
+cd Streaming-App
+docker compose up -d --build
+
+# Terminal 2: broadcaster from source
 cd Streaming-App
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r broadcaster/requirements.txt
 python -m broadcaster
+```
+
+To rebuild the exe after a code change:
+```powershell
+cd broadcaster
+pyinstaller broadcaster.spec
+# output: dist\Broadcaster.exe
 ```
 
 Things that won't work on native Windows out of the box:
@@ -233,9 +248,12 @@ What `start.sh` does:
    LiveKit, Postgres, and MinIO.
 3. Waits for the backend to accept HTTP connections on `:5001`.
 4. Launches the broadcaster (`python -m broadcaster`) on the host.
-5. The broadcaster creates a stream record, connects to LiveKit, starts
+5. A **login dialog** appears — enter your username + password and click
+   **Sign in**, or click **Continue as Guest** to stream without an account.
+6. The broadcaster creates a stream record, connects to LiveKit, starts
    publishing your camera, and **auto-opens the streamer dashboard** in
-   your default browser.
+   your default browser — pre-authenticated as the same account you used
+   in the dialog. No second login needed.
 
 First run will take ~2 minutes (Docker has to pull and build images).
 Subsequent runs are ~10s.
@@ -245,13 +263,9 @@ Subsequent runs are ~10s.
 ```
 2026-05-21 12:34:56,789 [INFO] broadcaster: Stream created: id=<uuid>
 2026-05-21 12:34:56,789 [INFO] broadcaster: LiveKit URL: ws://192.168.1.42:7880
-2026-05-21 12:34:56,789 [INFO] broadcaster: Streamer dashboard: http://localhost:5001/streamer/<uuid>
+2026-05-21 12:34:56,789 [INFO] broadcaster: Streamer dashboard: http://localhost:5001/streamer/<uuid>#api_key=...
 2026-05-21 12:34:57,012 [INFO] broadcaster: LiveKit publisher ready; entering capture loop
 ```
-
-The dashboard opens in your browser. Sign up (or log in) in the modal
-— this single sign-in tells the broadcaster who you are and loads
-your custom gestures.
 
 > **If `./start.sh` exits with "Missing host libraries:"** install
 > what it asks for: `sudo apt install -y libportaudio2 libgl1 libglib2.0-0`.
@@ -296,7 +310,9 @@ Native: see [FE README → Building the dev client](../FE-Streaming-app/README.m
 
 ## Streamer workflow once everything's up
 
-- **Dashboard** auto-opens — sign in.
+- **Dashboard** auto-opens and is already signed in as the account you
+  used in the login dialog. If you chose guest mode, an optional sign-in
+  modal is shown (you can skip it).
 - See your own video (~1s LiveKit latency), live comments, viewer
   count, hearts.
 - **"Manage gestures ↗"** opens the gestures page in a new tab.
@@ -306,6 +322,8 @@ Native: see [FE README → Building the dev client](../FE-Streaming-app/README.m
     pill that appears.
 - Gestures fire actions immediately; viewers see them as composited
   effects on the video.
+- Press `M` in the OpenCV preview to toggle mute. Viewers see a 🔇 badge
+  and their audio is silenced via LiveKit track mute + Socket.IO.
 
 ---
 
